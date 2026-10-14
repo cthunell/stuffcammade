@@ -339,3 +339,34 @@ export function portfolioHistory(doc) {
     return { date: p.date, total, values: { ...cur } };
   });
 }
+
+// ---------- forecast vs actual ----------
+// Each check-in keeps the forecast that stood until the next check-in (`plan`: available balance
+// for each of the next days) and its own available balance (`avail`). Comparing the next check-in
+// against that plan says whether someone came out ahead of or behind the forecast.
+export const PLAN_DAYS = 120;
+export function planFor(doc, date) {
+  return simulate(doc, { today: date, days: PLAN_DAYS }).map((r) => Math.round(r.bal));
+}
+
+export function trackRecord(doc) {
+  const out = [];
+  for (let i = 1; i < doc.checkins.length; i++) {
+    const a = doc.checkins[i - 1], b = doc.checkins[i];
+    const days = daysBetween(a.date, b.date);
+    if (days <= 0) continue;
+    if (a.plan && days <= a.plan.length && b.avail != null) {
+      const expected = a.plan[days - 1];
+      out.push({ from: a.date, to: b.date, days, expected, actual: b.avail, diff: b.avail - expected, exact: true });
+    } else {
+      // Older check-ins without a saved forecast: estimate with today's bills, income and budget.
+      let income = 0, bills = 0;
+      for (let d = addDays(D(a.date), 1); iso(d) <= b.date; d = addDays(d, 1)) {
+        for (const e of eventsOn(doc, iso(d))) if (e.kind === 'income') income += e.amount; else if (e.kind === 'bill') bills -= e.amount;
+      }
+      const expected = a.balance + income - bills - (+b.transferred || 0) - budgetTotal(doc) * 12 / 365 * days;
+      out.push({ from: a.date, to: b.date, days, expected, actual: b.balance, diff: b.balance - expected, exact: false });
+    }
+  }
+  return out;
+}

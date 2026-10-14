@@ -137,6 +137,10 @@ main{padding-block:24px 48px;padding-left:max(28px, env(safe-area-inset-left,0px
 #pchart svg{display:block;width:100%;height:auto}
 #pchart text{font:11px var(--f-data);fill:var(--muted)}
 #pchart .grid{stroke:var(--line)} #pchart .fore{fill:none;stroke:var(--accent);stroke-width:2.25} #pchart .dot{fill:var(--accent);stroke:var(--panel);stroke-width:2}
+/* forecast vs actual */
+.track svg{display:block;width:100%;height:auto;margin:10px 0}
+.track text{font:11px var(--f-data);fill:var(--muted)}
+.track .zero{stroke:var(--muted)} .track .up{fill:var(--good)} .track .down{fill:var(--bad)}
 /* calendar */
 .cal-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 10px}
 .cal-tabs button{font:500 12px var(--f-body);border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:7px;padding:4px 9px;cursor:pointer}
