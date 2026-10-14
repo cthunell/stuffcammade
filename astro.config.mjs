@@ -7,4 +7,6 @@ import vercel from '@astrojs/vercel';
 export default defineConfig({
   site: 'https://stuffcammade.com',
   adapter: vercel(),
+  // The home page is the projects list now; keep old links working.
+  redirects: { '/projects': '/' },
 });

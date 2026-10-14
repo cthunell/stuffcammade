@@ -1,0 +1,26 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="About">
+  <section class="hero">
+    <h1>Hi, I'm Cam.</h1>
+    <p class="lead">
+      This is where I keep the things I build: side projects, experiments, and tools for personal
+      growth and getting organized. Some are finished, most are works in progress.
+    </p>
+    <p><a href="/">See the projects →</a></p>
+  </section>
+</Base>
+
+<style>
+  .hero h1 {
+    font-size: clamp(2rem, 6vw, 2.75rem);
+    margin: 0 0 0.75rem;
+  }
+  .lead {
+    font-size: 1.2rem;
+    color: var(--muted);
+    margin: 0 0 1.5rem;
+  }
+</style>
