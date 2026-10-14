@@ -59,6 +59,7 @@ let saveTimer, saving = Promise.resolve(), dirty = false;
 
 function changed() {
   dirty = true;
+  refreshPlan();
   render();
   status('Saving…');
   clearTimeout(saveTimer);
@@ -104,6 +105,13 @@ function render() {
   try { if (!focusNext) caret = [document.activeElement.selectionStart, document.activeElement.selectionEnd]; } catch { /* not a text field */ }
   focusNext = null;
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === v));
+  const grp = $('#planGroup');
+  if (grp && grp.querySelector('a.on')) grp.open = true;
+  else if (grp && !grp.dataset.ready) { try { if (localStorage.getItem('runway:planOpen') === '0') grp.open = false; } catch { /* storage blocked */ } }
+  if (grp && !grp.dataset.ready) {
+    grp.dataset.ready = '1';
+    grp.addEventListener('toggle', () => { try { localStorage.setItem('runway:planOpen', grp.open ? '1' : '0'); } catch { /* storage blocked */ } });
+  }
   const due = $('[data-nav="checkin"] .due');
   const last = E.latestCheckin(doc);
   if (due) due.hidden = !!last && E.daysBetween(last.date, today()) < 7;
@@ -212,7 +220,7 @@ function dashboard() {
   const hero = runwayMode ? `
       <div class="eyebrow">With your income and bills as scheduled</div>
       ${r.out ? `<div class="big">Money lasts until <span class="${r.days < 90 ? 'bad' : 'good'}">${dateLabel(r.out, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
-      <p>About <b>${r.months < 1 ? r.days + ' days' : r.months.toFixed(1) + ' months'}</b> on ${money(r.cash)} available${setAside ? ` (not counting ${money(setAside)} set aside for goals)` : ''}, spending ${money(r.burn)} a month on bills and everyday costs${cushion ? `, keeping ${money(cushion)} as a cushion` : ''}. Income counts only as long as it’s scheduled, so set an end date on income that will stop.</p>`
+      <p>About <b>${r.months < 1 ? r.days + ' days' : r.months.toFixed(1) + ' months'}</b> on ${money(r.cash)} available${setAside ? ` (not counting ${money(setAside)} set aside for goals)` : ''}, spending ${money(r.burn)} a month on bills and everyday costs${cushion ? `, keeping ${money(cushion)} as a cushion` : ''}. ${endingIncome(r.out)}</p>`
     : `<div class="big">Your money lasts <span class="good">2+ years</span></div><p>With your income as scheduled, your available balance stays above ${money(cushion)} for at least two years.</p>`}` : `
       <div class="eyebrow">Aim to spend under</div>
       ${m.perDay > 0 ? `<div class="big"><span class="good">${money(m.perDay)}</span> a day</div>
@@ -270,7 +278,7 @@ function dashboard() {
   return top(`<div class="mode" role="group" aria-label="View"><button type="button" data-act="mode-monthly" aria-pressed="${!runwayMode}">Monthly</button><button type="button" data-act="mode-runway" aria-pressed="${runwayMode}">Runway</button></div>`) + legacyBanner + setupPanel() + `
     <section class="panel hero">
       <div class="hero-main">${hero}</div>
-      ${checkinMini(since)}
+      ${heroSide(m)}
     </section>
     <section class="kpis">${kpis.map(([l, v, n, cls]) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v ${cls || ''}">${v}</span><span class="n">${n}</span></div>`).join('')}</section>
     <section class="panel chart">
@@ -283,6 +291,36 @@ function dashboard() {
     ${goalsPanel}`;
 }
 
+// One line on how the latest check-in compared with the forecast going into it.
+function vsNote() {
+  const t = E.trackRecord(doc), r = t[t.length - 1];
+  if (!r || !r.exact) return '';
+  if (Math.abs(r.diff) < 1) return 'Your last check-in landed right on the forecast.';
+  return `Your last check-in came in <span class="delta ${r.diff < 0 ? 'bad' : ''}">${money(Math.abs(r.diff))} ${r.diff < 0 ? 'behind' : 'ahead of'}</span> the forecast.`;
+}
+
+function trackPanel() {
+  const t = E.trackRecord(doc).slice(-12);
+  if (!t.length) return '';
+  const total = t.reduce((a, r) => a + r.diff, 0), ahead = t.filter((r) => r.diff >= 0).length;
+  const max = Math.max(...t.map((r) => Math.abs(r.diff)), 1);
+  const W = 1000, H = 160, mid = H / 2, bw = Math.min(60, (W - 40) / t.length - 10);
+  const bars = t.map((r, i) => {
+    const h = Math.abs(r.diff) / max * (mid - 18), x = 20 + i * ((W - 40) / t.length) + ((W - 40) / t.length - bw) / 2;
+    return `<rect x="${x.toFixed(1)}" y="${(r.diff >= 0 ? mid - h : mid).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" rx="3" class="${r.diff >= 0 ? 'up' : 'down'}"><title>${dateLabel(r.to)}: ${r.diff >= 0 ? 'ahead' : 'behind'} ${money(Math.abs(r.diff))}</title></rect>
+      <text x="${(x + bw / 2).toFixed(1)}" y="${H - 2}" text-anchor="middle">${dateLabel(r.to)}</text>`;
+  }).join('');
+  return `<section class="panel">
+      <h2>Forecast vs actual</h2>
+      <p class="muted">Each check-in is compared with what the forecast expected for that day, so you can see if you’re beating it or falling behind over time. Over your last ${t.length} check-in${t.length === 1 ? '' : 's'} you’ve been ahead ${ahead} time${ahead === 1 ? '' : 's'}, <span class="delta ${total < 0 ? 'bad' : ''}">${money(Math.abs(total))} ${total < 0 ? 'behind' : 'ahead'} in total</span>.</p>
+      <div class="track"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ahead or behind the forecast at each check-in"><line x1="10" x2="${W - 10}" y1="${mid}" y2="${mid}" class="zero"/>${bars}</svg></div>
+      <table class="tbl"><thead><tr><th>Check-in</th><th class="num">Forecast expected</th><th class="num">Actual</th><th class="num">Difference</th></tr></thead><tbody>
+        ${[...t].reverse().map((r) => `<tr><td>${dateLabel(r.to, { weekday: 'short', month: 'short', day: 'numeric' })} <span class="s">(${r.days} day${r.days === 1 ? '' : 's'} after the one before)</span></td><td class="num">${money(r.expected)}${r.exact ? '' : '<span class="s"> est.</span>'}</td><td class="num">${money(r.actual)}</td><td class="num"><span class="${r.diff < 0 ? 'bad' : 'good'}">${r.diff >= 0 ? '+' : '−'}${money(Math.abs(r.diff))}</span></td></tr>`).join('')}
+      </tbody></table>
+      ${t.some((r) => !r.exact) ? '<p class="muted small">“est.” rows are from before Runway saved forecasts, so they’re estimated with your current bills, income and budget.</p>' : ''}
+    </section>`;
+}
+
 function spentNote(since) {
   if (!since) return '';
   if (since.spent < 0) return `Between your last two check-ins your balance came in <b>${money(-since.spent)} higher</b> than bills and income explain. If money came in that isn’t listed under Income, that’s why.`;
@@ -292,19 +330,48 @@ function spentNote(since) {
 
 const balanceInput = (a, lv, form) => `<input id="v-${a.id}" ${form ? `form="${form}"` : ''} class="money" data-acct-value="${a.id}" inputmode="decimal" placeholder="${lv[a.id] ? esc(money(lv[a.id].value, true)) : '$0.00'}" autocomplete="off" aria-label="${esc(a.name)} balance">`;
 
-function checkinMini(since) {
-  const last = E.latestCheckin(doc);
-  const ago = E.daysBetween(last.date, today());
-  const sp = E.spendingAccounts(doc), lv = E.latestValues(doc);
-  const ask = ago >= 7 ? 'Time for a check-in' : 'Check in';
-  return `<form class="checkin" data-form="quick-checkin">
-      ${sp.length === 1 ? `<label for="v-${sp[0].id}">${ask}: what’s in ${esc(sp[0].name)} today?</label>
-        <div class="row">${balanceInput(sp[0], lv)}<button class="btn" type="submit">Update</button></div>`
-      : `<span class="lbl">${ask}: what’s in your spending accounts today?</span>
-        <div class="acct-rows">${sp.map((a) => `<label class="acct-row"><span>${esc(a.name)}</span>${balanceInput(a, lv)}</label>`).join('')}</div>
-        <div class="row"><button class="btn" type="submit">Update</button><span class="note">Leave any blank to keep its last balance.</span></div>`}
-      <div class="note">Last check-in ${ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago'}. ${spentNote(since)}</div>
-    </form>`;
+// Right side of the dashboard hero: how you're pacing against the forecast, the
+// stretch until the next paycheck, and a nudge toward the check-in page.
+function heroSide(m) {
+  const t = E.trackRecord(doc).slice(-12);
+  let pace;
+  if (t.length) {
+    let run = 0;
+    const pts = [0, ...t.map((r) => (run += r.diff))], total = run;
+    const lo = Math.min(...pts), hi = Math.max(...pts), span = hi - lo || 1, W = 240, H = 48;
+    const xy = pts.map((v, i) => `${(i / (pts.length - 1) * W).toFixed(1)},${(H - 4 - (v - lo) / span * (H - 8)).toFixed(1)}`);
+    const zero = (H - 4 - (0 - lo) / span * (H - 8)).toFixed(1);
+    pace = `<div class="eyebrow">Vs. your forecast</div>
+      <div class="side-v ${total < 0 ? 'bad' : 'good'}">${total >= 0 ? '+' : '−'}${money(Math.abs(total))} <span class="side-u">${total < 0 ? 'behind' : 'ahead'}</span></div>
+      <svg class="spark ${total < 0 ? 'down' : 'up'}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="${W}" y1="${zero}" y2="${zero}"/><polyline points="${xy.join(' ')}"/></svg>
+      <div class="s">Running total over your last ${t.length} check-in${t.length === 1 ? '' : 's'}. <a href="#checkin">See each one</a></div>`;
+  } else {
+    pace = `<div class="eyebrow">Vs. your forecast</div>
+      <div class="s">After your next check-in you’ll see here whether you’re beating the forecast or falling behind it.</div>`;
+  }
+  let pay = '';
+  if (m.payday) {
+    let out = 0;
+    for (let i = 1; i <= m.untilPayday; i++) {
+      const s = E.iso(E.addDays(E.D(today()), i));
+      for (const e of E.eventsOn(doc, s)) if (e.amount < 0 && s < m.payday) out -= e.amount;
+    }
+    pay = `<div class="side-sec"><div class="eyebrow">Next paycheck</div>
+      <div class="side-v">${m.untilPayday === 0 ? 'Today' : `${m.untilPayday} day${m.untilPayday === 1 ? '' : 's'}`} <span class="side-u">${dateLabel(m.payday)}</span></div>
+      <div class="s">${out ? `${money(out)} in bills and savings before then` : 'No bills due before then'}</div></div>`;
+  }
+  const last = E.latestCheckin(doc), ago = E.daysBetween(last.date, today());
+  return `<aside class="hero-side">
+      <div class="side-sec">${pace}</div>
+      ${pay}
+      <a class="side-ci ${ago >= 7 ? 'due' : ''}" href="#checkin">${ago >= 7 ? 'Time for a check-in' : 'Update balances'} <span>Last ${ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago'} →</span></a>
+    </aside>`;
+}
+
+function endingIncome(out) {
+  const ends = doc.income.filter((it) => it.on !== false && it.end && it.end >= today() && it.end <= E.iso(E.addDays(E.D(out), 31)));
+  return ends.length ? ` ${ends.map((it) => `${esc(it.name)} stops after ${dateLabel(it.end)}`).join('; ')}.`
+    : ' Income counts only as long as it’s scheduled, so set an end date on income that will stop.';
 }
 
 // ---------- check-in ----------
@@ -334,7 +401,7 @@ function checkin() {
         <tbody>${group('investment')}</tbody>
       </table></div>
       <div class="form-row ci-save"><label>Date<input id="ciDate" form="ci-form" type="date" name="date" value="${today()}" max="${today()}" required></label><button class="btn" type="submit" form="ci-form">Save check-in</button></div>
-      ${since ? `<p class="callout">From ${dateLabel(since.from)} to ${dateLabel(since.to)}: ${spentNote(since).replace('Between your last two check-ins ', '')} Your everyday budget for those ${since.days} days was ${money(since.budgeted)}.</p>` : ''}
+      ${since ? `<p class="callout">From ${dateLabel(since.from)} to ${dateLabel(since.to)}: ${spentNote(since).replace('Between your last two check-ins ', '')} Your everyday budget for those ${since.days} days was ${money(since.budgeted)}. ${vsNote()}</p>` : ''}
       <form class="form-row add-acct" data-form="new-acct">
         <datalist id="acct-names">${[...ACCOUNTS.spending, ...ACCOUNTS.investment].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
         <label>Add an account<input id="anew-name" name="name" list="acct-names" maxlength="40" placeholder="e.g. Venmo or Roth IRA" required></label>
@@ -342,6 +409,7 @@ function checkin() {
         <button class="btn ghost" type="submit">Add account</button>
       </form>
     </section>
+    ${trackPanel()}
     <section class="panel"><h2>History</h2>
       ${rows.length ? `<table class="tbl"><thead><tr><th>Date</th><th>Accounts</th><th class="num">Spending total</th><th></th></tr></thead><tbody>${rows.map((c) => `<tr><td>${dateLabel(c.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</td><td class="muted small">${c.by ? Object.entries(c.by).map(([id, v]) => `${esc(doc.accounts.find((a) => a.id === id)?.name || 'Removed account')} ${money(v)}`).join(' · ') : ''}</td><td class="num">${money(c.balance, true)}</td><td class="num"><button class="linkbtn" type="button" data-act="del-checkin" data-date="${c.date}">Remove</button></td></tr>`).join('')}</tbody></table>`
         : '<p class="muted">No check-ins yet.</p>'}
@@ -684,19 +752,30 @@ function addCheckin(date, balance, by) {
   const last = E.latestCheckin(doc);
   const entry = { date, balance, ...(by ? { by } : {}) };
   if (last && date > last.date) {
+    refreshPlan(); // freeze the forecast the previous check-in ends with
     const transferred = E.applyContributions(doc, last.date, date);
     if (transferred) entry.transferred = transferred;
   }
   doc.checkins = doc.checkins.filter((c) => c.date !== date);
   doc.checkins.push(entry);
   doc.checkins.sort((a, b) => (a.date < b.date ? -1 : 1));
+  if (E.latestCheckin(doc) === entry) entry.avail = Math.round((balance - E.setAsideTotal(doc)) * 100) / 100;
+}
+
+// The latest check-in's forecast follows every edit until the next check-in is saved, so the
+// comparison uses the plan as it stood going into that check-in.
+function refreshPlan() {
+  const last = E.latestCheckin(doc);
+  if (last) last.plan = E.planFor(doc, last.date);
 }
 
 // Set an item's schedule from its fields; monthly items keep a day of the month.
 function fixSchedule(it) {
   if (it.freq === 'monthly') {
     const day = +it.day || (it.start ? E.D(it.start).getUTCDate() : 0);
-    if (day) { it.day = day; it.start = E.nextOnDay(day, today()); }
+    // Anchor at the first check-in so a bill due earlier this month still counts between check-ins.
+    const from = doc.checkins[0] && doc.checkins[0].date < today() ? doc.checkins[0].date : today();
+    if (day) { it.day = day; it.start = E.nextOnDay(day, from); }
   } else {
     delete it.day;
     if (!it.start) it.start = today();
