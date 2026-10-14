@@ -3,12 +3,17 @@
 // A Runway document:
 // {
 //   version: 2,
-//   checkins:   [{ date: 'YYYY-MM-DD', balance: number }],   // newest last
+//   checkins:   [{ date: 'YYYY-MM-DD', balance: number, transferred?: number }],   // newest last; transferred = moved to savings since the previous one
 //   income:     [{ id, name, amount, freq, start: 'YYYY-MM-DD', end?: 'YYYY-MM-DD', on?: boolean }],
 //   bills:      [{ id, name, category?, amount, freq, start, end?, on?: boolean }],
 //   categories: [{ id, name, budget }],                        // monthly everyday-spending budgets
-//   settings:   { mode: 'monthly' | 'runway', cushion: number },
+//   goals:      [{ id, name, where: 'checking' | 'savings', saved, target?, monthly, day, start }],
+//   settings:   { mode: 'monthly' | 'runway', cushion: number, setupDone?: boolean },
 // }
+// Goals are money put aside each month. 'savings' goals are transfers to a separate account;
+// 'checking' goals stay in checking but are set aside, so the available balance is lower.
+// `saved` is the amount as of the latest check-in and `start` is the next contribution date;
+// contributions stop once the target is reached.
 // freq: 'once' | 'weekly' | 'biweekly' | 'semimonthly' | 'monthly' | 'quarterly' | 'yearly'.
 // `start` anchors the schedule: the first date for weekly/biweekly/once, and the day of the
 // month (and month, for quarterly/yearly) for the rest. Semimonthly is the 1st and 15th.
@@ -29,6 +34,7 @@ export const emptyDoc = () => ({
   income: [],
   bills: [],
   categories: [],
+  goals: [],
   settings: { mode: 'monthly', cushion: 0 },
 });
 
@@ -70,13 +76,61 @@ export function perMonth(item) {
 
 export const budgetTotal = (doc) => doc.categories.reduce((a, c) => a + (+c.budget || 0), 0);
 export const latestCheckin = (doc) => doc.checkins.length ? doc.checkins[doc.checkins.length - 1] : null;
+const goals = (doc) => doc.goals || [];
+export const setAsideTotal = (doc) => goals(doc).filter((g) => g.where === 'checking').reduce((a, g) => a + (+g.saved || 0), 0);
+export const savingsTotal = (doc) => goals(doc).filter((g) => g.where === 'savings').reduce((a, g) => a + (+g.saved || 0), 0);
+export const goalMonthly = (g) => (g.target > 0 && g.saved >= g.target ? 0 : +g.monthly || 0);
+export const savingTotal = (doc) => goals(doc).reduce((a, g) => a + goalMonthly(g), 0);
+// Spendable balance now: the latest check-in minus money set aside for goals kept in checking.
+export const available = (doc) => { const c = latestCheckin(doc); return c ? c.balance - setAsideTotal(doc) : 0; };
 
-// Events (income and bills) on day `s`.
+// Does goal `g` get a contribution on day `s`? Monthly on its day, until the target is met.
+export function goalHits(g, s) {
+  if (!(g.monthly > 0) || !g.start || !hits({ freq: 'monthly', amount: g.monthly, start: g.start, day: g.day }, s)) return false;
+  if (!(g.target > 0)) return true;
+  const n = Math.ceil(Math.max(0, g.target - (+g.saved || 0)) / g.monthly);
+  const a = D(g.start), d = D(s);
+  return (d.getUTCFullYear() - a.getUTCFullYear()) * 12 + d.getUTCMonth() - a.getUTCMonth() < n;
+}
+
+// Next date on or after `from` that falls on day-of-month `day` (clamped to short months).
+export function nextOnDay(day, from = todayIso()) {
+  const f = D(from);
+  for (let k = 0; k < 2; k++) {
+    const y = f.getUTCFullYear(), m0 = f.getUTCMonth() + k;
+    const d = new Date(Date.UTC(y, m0, Math.min(day, dim(y, m0))));
+    if (iso(d) >= from) return iso(d);
+  }
+  return from;
+}
+
+// Events (income, bills and goal contributions) on day `s`.
 export function eventsOn(doc, s, { noIncomeFrom } = {}) {
   const ev = [];
   for (const it of doc.income) if (hits(it, s) && !(noIncomeFrom && s >= noIncomeFrom)) ev.push({ kind: 'income', name: it.name, amount: +it.amount });
   for (const b of doc.bills) if (hits(b, s)) ev.push({ kind: 'bill', name: b.name, amount: -b.amount, id: b.id, category: b.category });
+  // With income stopped, goal contributions pause too.
+  if (!noIncomeFrom) for (const g of goals(doc)) if (goalHits(g, s)) ev.push({ kind: 'save', name: g.name, amount: -g.monthly, id: g.id, where: g.where });
   return ev;
+}
+
+// Move goal balances forward for contributions made after `from` through `to` (a new check-in).
+// Returns how much went to separate savings accounts in that time.
+export function applyContributions(doc, from, to) {
+  let transferred = 0;
+  for (const g of goals(doc)) {
+    if (!g.start) continue;
+    const before = { ...g }; // the schedule as it stood at the last check-in
+    for (let d = addDays(D(from), 1); iso(d) <= to; d = addDays(d, 1)) {
+      if (goalHits(before, iso(d))) {
+        g.saved = Math.round(((+g.saved || 0) + g.monthly) * 100) / 100;
+        if (g.where === 'savings') transferred += g.monthly;
+      }
+    }
+    if (g.target > 0) g.saved = Math.min(g.saved, Math.max(g.target, 0));
+    if (g.start <= to) g.start = nextOnDay(g.day || D(g.start).getUTCDate(), iso(addDays(D(to), 1)));
+  }
+  return transferred;
 }
 
 // Day-by-day balance from the latest check-in. Returns rows from `from` (default today).
@@ -89,7 +143,7 @@ export function simulate(doc, opts = {}) {
   const startDay = last.date < today ? last.date : today;
   const days = opts.days ?? 365;
   const out = [];
-  let bal = last.balance;
+  let bal = opts.allCash ? last.balance + savingsTotal(doc) : available(doc);
   // The check-in balance is end-of-day for its date, so start the next day.
   for (let d = addDays(D(startDay), 1); out.length < days; d = addDays(d, 1)) {
     const s = iso(d);
@@ -129,7 +183,7 @@ function sumEvents(doc, from, to, kind) {
 export function monthly(doc, today = todayIso()) {
   const last = latestCheckin(doc);
   const cushion = +doc.settings.cushion || 0;
-  const balance = last ? last.balance : 0;
+  const balance = available(doc);
   const payday = nextPayday(doc, today);
   const nextMonthEnd = monthEnd(iso(addDays(D(monthEnd(today)), 1)));
   let perDay = Infinity, running = balance - cushion, t = 0;
@@ -153,6 +207,7 @@ export function monthly(doc, today = todayIso()) {
     incomeThisMonth: sumEvents(doc, mStart, mEnd, 'income'),
     billsLeftThisMonth: today < mEnd ? sumEvents(doc, tomorrow, mEnd, 'bill') : 0,
     budget: budgetTotal(doc),
+    savingThisMonth: sumEvents(doc, mStart, mEnd, 'save'),
     endOfMonth: endRow ? endRow.bal : balance,
   };
 }
@@ -164,7 +219,7 @@ export const isEssential = (b) => ESSENTIAL.test(`${b.category || ''} ${b.name}`
 // Everything Runway mode shows: how long the money lasts if income stopped tomorrow.
 export function runway(doc, today = todayIso()) {
   const line = +doc.settings.cushion || 0;
-  const base = { today, days: 730, noIncomeFrom: iso(addDays(D(today), 1)) };
+  const base = { today, days: 730, noIncomeFrom: iso(addDays(D(today), 1)), allCash: true };
   const rows = simulate(doc, base);
   const out = firstBelow(rows, line);
   const days = out ? daysBetween(today, out) : null;
@@ -177,7 +232,8 @@ export function runway(doc, today = todayIso()) {
     ...(budgetTotal(doc) > 0 ? [{ label: 'Trim everyday spending by 20%', sub: `${Math.round(budgetTotal(doc) * 0.2)} / month`, days: gain({ budgetScale: 0.8 }) }] : []),
   ].filter((l) => l.days > 0).sort((a, b) => b.days - a.days).slice(0, 3);
   const burn = doc.bills.reduce((a, b) => a + perMonth(b), 0) + budgetTotal(doc);
-  return { out, days, months: days === null ? null : days / 30.44, burn, levers };
+  const last = latestCheckin(doc);
+  return { out, days, months: days === null ? null : days / 30.44, burn, levers, cash: last ? last.balance + savingsTotal(doc) : 0 };
 }
 
 // Spending inferred between the last two check-ins: what left the account that isn't a known bill.
@@ -187,11 +243,12 @@ export function sinceLastCheckin(doc) {
   const a = doc.checkins[n - 2], b = doc.checkins[n - 1];
   const days = daysBetween(a.date, b.date);
   if (days <= 0) return null;
+  // Money kept in checking for goals is still in the balance; transfers to savings are not.
   let income = 0, bills = 0;
   for (let d = addDays(D(a.date), 1); iso(d) <= b.date; d = addDays(d, 1)) {
-    for (const e of eventsOn(doc, iso(d))) e.kind === 'income' ? (income += e.amount) : (bills += -e.amount);
+    for (const e of eventsOn(doc, iso(d))) if (e.kind === 'income') income += e.amount; else if (e.kind === 'bill') bills -= e.amount;
   }
-  const spent = a.balance + income - bills - b.balance;
+  const spent = a.balance + income - bills - b.balance - (+b.transferred || 0);
   const budgeted = budgetTotal(doc) * 12 / 365 * days;
   return { from: a.date, to: b.date, days, spent, budgeted };
 }
@@ -241,5 +298,13 @@ export function fromLegacy(old, saved) {
 
 // Light shape check for documents that come from storage or an imported file.
 export function isDoc(x) {
-  return !!x && x.version === 2 && ['checkins', 'income', 'bills', 'categories'].every((k) => Array.isArray(x[k])) && typeof x.settings === 'object';
+  return !!x && x.version === 2 && ['checkins', 'income', 'bills', 'categories'].every((k) => Array.isArray(x[k])) && (x.goals === undefined || Array.isArray(x.goals)) && typeof x.settings === 'object';
+}
+
+// How a typical month splits up, for the dashboard pie chart.
+export function monthPlan(doc) {
+  const income = doc.income.reduce((a, it) => a + perMonth(it), 0);
+  const bills = doc.bills.reduce((a, b) => a + perMonth(b), 0);
+  const everyday = budgetTotal(doc), saving = savingTotal(doc);
+  return { income, bills, everyday, saving, left: income - bills - everyday - saving };
 }

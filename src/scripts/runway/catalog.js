@@ -26,3 +26,15 @@ export const CATEGORIES = {
     'Cash / ATM', 'Bank fees', 'Unplanned / buffer',
   ],
 };
+
+export const INCOME = {
+  common: ['Paycheck', 'Side income', 'Benefits', 'Child support', 'Rental income'],
+  more: ['Unemployment', 'Social Security', 'Pension', 'Freelance / gig work', 'Tips', 'Alimony', 'Investment income'],
+};
+
+// Savings goals. Kept in checking (set aside) unless the name suggests a separate account.
+export const GOALS = {
+  common: ['Emergency fund', 'Vacation / travel', 'Holiday gifts', 'Car repairs', 'Next car', 'Home down payment', 'Big purchase'],
+  more: ['Wedding', 'Moving', 'Medical / deductible', 'Education', 'Pet care', 'Annual bills', 'Home repairs', 'New phone / computer', 'Kids’ activities', 'Giving'],
+};
+export const SAVINGS_BY_DEFAULT = ['Emergency fund', 'Home down payment', 'Next car'];
