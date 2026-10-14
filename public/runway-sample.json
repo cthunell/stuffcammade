@@ -3,7 +3,11 @@
  "checkins": [
   {
    "date": "",
-   "balance": 4300
+   "balance": 4300,
+   "by": {
+    "a-chk": 4120,
+    "a-venmo": 180
+   }
   }
  ],
  "income": [
@@ -144,6 +148,51 @@
    "target": 1500,
    "monthly": 125,
    "day": 15
+  }
+ ],
+ "accounts": [
+  {
+   "id": "a-chk",
+   "name": "Checking",
+   "kind": "spending"
+  },
+  {
+   "id": "a-venmo",
+   "name": "Venmo",
+   "kind": "spending"
+  },
+  {
+   "id": "a-401k",
+   "name": "401(k)",
+   "kind": "investment"
+  },
+  {
+   "id": "a-roth",
+   "name": "Roth IRA",
+   "kind": "investment"
+  }
+ ],
+ "portfolio": [
+  {
+   "offsetDays": -61,
+   "values": {
+    "a-401k": 41200,
+    "a-roth": 12800
+   }
+  },
+  {
+   "offsetDays": -30,
+   "values": {
+    "a-401k": 42950,
+    "a-roth": 13150
+   }
+  },
+  {
+   "offsetDays": 0,
+   "values": {
+    "a-401k": 43800,
+    "a-roth": 13420
+   }
   }
  ]
 }

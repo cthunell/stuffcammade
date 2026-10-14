@@ -13,6 +13,7 @@ const nav = [
   ['income', 'Income'],
   ['budget', 'Budget'],
   ['goals', 'Savings & goals'],
+  ['investments', 'Investments'],
   ['settings', 'Settings'],
 ];
 ---
@@ -125,6 +126,17 @@ main{padding-block:24px 48px;padding-left:max(28px, env(safe-area-inset-left,0px
 .tip div span{margin-left:auto;font-family:var(--f-data)}
 .tip i{display:inline-block;width:10px;height:3px;border-radius:2px}
 .tip .tev{color:var(--muted)}
+/* accounts */
+.acct-rows{display:flex;flex-direction:column;gap:6px}
+.acct-row{display:grid;grid-template-columns:minmax(0,1fr) 150px;align-items:center;gap:8px;font-weight:500}
+.checkin .row .note{align-self:center}
+.accts td:first-child{min-width:160px}
+.accts thead:not(:first-child) th{padding-top:18px}
+.ci-save{justify-content:flex-end}
+.add-acct{border-top:1px solid var(--line);padding-top:14px;margin-top:18px}
+#pchart svg{display:block;width:100%;height:auto}
+#pchart text{font:11px var(--f-data);fill:var(--muted)}
+#pchart .grid{stroke:var(--line)} #pchart .fore{fill:none;stroke:var(--accent);stroke-width:2.25} #pchart .dot{fill:var(--accent);stroke:var(--panel);stroke-width:2}
 /* calendar */
 .cal-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 10px}
 .cal-tabs button{font:500 12px var(--f-body);border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:7px;padding:4px 9px;cursor:pointer}

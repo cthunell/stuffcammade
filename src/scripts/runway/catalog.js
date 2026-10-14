@@ -38,3 +38,8 @@ export const GOALS = {
   more: ['Wedding', 'Moving', 'Medical / deductible', 'Education', 'Pet care', 'Annual bills', 'Home repairs', 'New phone / computer', 'Kids’ activities', 'Giving'],
 };
 export const SAVINGS_BY_DEFAULT = ['Emergency fund', 'Home down payment', 'Next car'];
+
+export const ACCOUNTS = {
+  spending: ['Checking', 'Cash', 'Venmo', 'PayPal', 'Cash App', 'Second checking'],
+  investment: ['401(k)', 'Roth IRA', 'Traditional IRA', 'Brokerage', 'HSA', '529 plan', 'Crypto', 'Pension'],
+};

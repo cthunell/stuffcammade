@@ -3,7 +3,8 @@
 // A Runway document:
 // {
 //   version: 2,
-//   checkins:   [{ date: 'YYYY-MM-DD', balance: number, transferred?: number }],   // newest last; transferred = moved to savings since the previous one
+//   checkins:   [{ date: 'YYYY-MM-DD', balance: number, by?: { [accountId]: number }, transferred?: number }],
+//                 // newest last; balance = total of spending accounts (`by`); transferred = moved to savings since the previous one
 //   income:     [{ id, name, amount, freq, start: 'YYYY-MM-DD', end?: 'YYYY-MM-DD', on?: boolean }],
 //   bills:      [{ id, name, category?, amount, freq, start, end?, on?: boolean }],
 //   categories: [{ id, name, budget }],                        // monthly everyday-spending budgets
@@ -35,6 +36,8 @@ export const emptyDoc = () => ({
   bills: [],
   categories: [],
   goals: [],
+  accounts: [],   // [{ id, name, kind: 'spending' | 'investment' }]
+  portfolio: [],  // investment balances: [{ date, values: { [accountId]: number } }], newest last
   settings: { mode: 'monthly', cushion: 0 },
 });
 
@@ -216,10 +219,11 @@ export function monthly(doc, today = todayIso()) {
 const ESSENTIAL = /rent|mortgage|insurance|loan|tax|irs|electric|power|gas|water|sewer|trash|utilit|child|alimony|car payment|credit card/i;
 export const isEssential = (b) => ESSENTIAL.test(`${b.category || ''} ${b.name}`);
 
-// Everything Runway mode shows: how long the money lasts if income stopped tomorrow.
+// Everything Runway mode shows: when the available balance would first drop below the cushion,
+// with income and bills as scheduled (so an income end date, like severance, shows up here).
 export function runway(doc, today = todayIso()) {
   const line = +doc.settings.cushion || 0;
-  const base = { today, days: 730, noIncomeFrom: iso(addDays(D(today), 1)), allCash: true };
+  const base = { today, days: 730 };
   const rows = simulate(doc, base);
   const out = firstBelow(rows, line);
   const days = out ? daysBetween(today, out) : null;
@@ -232,8 +236,7 @@ export function runway(doc, today = todayIso()) {
     ...(budgetTotal(doc) > 0 ? [{ label: 'Trim everyday spending by 20%', sub: `${Math.round(budgetTotal(doc) * 0.2)} / month`, days: gain({ budgetScale: 0.8 }) }] : []),
   ].filter((l) => l.days > 0).sort((a, b) => b.days - a.days).slice(0, 3);
   const burn = doc.bills.reduce((a, b) => a + perMonth(b), 0) + budgetTotal(doc);
-  const last = latestCheckin(doc);
-  return { out, days, months: days === null ? null : days / 30.44, burn, levers, cash: last ? last.balance + savingsTotal(doc) : 0 };
+  return { out, days, months: days === null ? null : days / 30.44, burn, levers, cash: available(doc) };
 }
 
 // Spending inferred between the last two check-ins: what left the account that isn't a known bill.
@@ -307,4 +310,32 @@ export function monthPlan(doc) {
   const bills = doc.bills.reduce((a, b) => a + perMonth(b), 0);
   const everyday = budgetTotal(doc), saving = savingTotal(doc);
   return { income, bills, everyday, saving, left: income - bills - everyday - saving };
+}
+
+// ---------- accounts ----------
+// Spending accounts (checking, Venmo, cash) add up to the check-in balance. Investment accounts
+// (401(k), IRA, brokerage) are tracked on their own and never count toward available money.
+export const spendingAccounts = (doc) => (doc.accounts || []).filter((a) => a.kind !== 'investment');
+export const investmentAccounts = (doc) => (doc.accounts || []).filter((a) => a.kind === 'investment');
+
+// Latest known balance of each account: { id: { value, date } }.
+export function latestValues(doc) {
+  const out = {};
+  for (const c of doc.checkins) {
+    const by = c.by || (doc.accounts?.[0] ? { [doc.accounts[0].id]: c.balance } : {});
+    for (const [id, v] of Object.entries(by)) out[id] = { value: v, date: c.date };
+  }
+  for (const p of doc.portfolio || []) for (const [id, v] of Object.entries(p.values)) out[id] = { value: v, date: p.date };
+  return out;
+}
+
+// Total investment value at each update, carrying forward accounts not updated that day.
+export function portfolioHistory(doc) {
+  const ids = new Set(investmentAccounts(doc).map((a) => a.id));
+  const cur = {};
+  return (doc.portfolio || []).map((p) => {
+    Object.assign(cur, p.values);
+    const total = Object.entries(cur).filter(([id]) => ids.has(id)).reduce((a, [, v]) => a + v, 0);
+    return { date: p.date, total, values: { ...cur } };
+  });
 }
