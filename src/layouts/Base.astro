@@ -31,10 +31,10 @@ const path = Astro.url.pathname;
       <nav class="container">
         <a class="brand" href="/">Stuff Cam Made</a>
         <div class="links">
-          <a href="/" aria-current={path === '/' ? 'page' : undefined}>Home</a>
-          <a href="/projects/" aria-current={path.startsWith('/projects') ? 'page' : undefined}>
+          <a href="/" aria-current={path === '/' || path.startsWith('/projects') ? 'page' : undefined}>
             Projects
           </a>
+          <a href="/about/" aria-current={path.startsWith('/about') ? 'page' : undefined}>About</a>
         </div>
       </nav>
     </header>
