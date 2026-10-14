@@ -2,6 +2,7 @@
 // Private cash runway forecast. Signed-in owner only; all numbers load from the private store.
 import { getSession } from '../lib/auth';
 import { privateHeaders } from '../lib/private-response';
+import RunwayApp from '../components/RunwayApp.astro';
 
 export const prerender = false;
 
@@ -11,14 +12,6 @@ if (!session) {
 }
 for (const [k, v] of Object.entries(privateHeaders)) Astro.response.headers.set(k, v);
 
-const fields = [
-  { id: 'startBal', type: 'number', step: 50 },
-  { id: 'cash', type: 'number', step: 10 },
-  { id: 'sevEnd', type: 'date' },
-  { id: 'payAmt', type: 'number', step: 10 },
-  { id: 'ui', type: 'number', step: 25 },
-  { id: 'venmoBal', type: 'number', step: 50 },
-];
 ---
 <!doctype html>
 <html lang="en">
@@ -27,173 +20,9 @@ const fields = [
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<title>Cash Runway Forecast</title>
+<title>Runway</title>
 </head>
 <body>
-<div class="wrap">
-  <div class="topbar">
-    <a href="/">← stuffcammade.com</a>
-    <span id="saveStatus" class="note" aria-live="polite"></span>
-    <span class="topbar-right">
-      <button type="button" id="resetBtn">Reset to original</button>
-      <a href="/api/auth/signout">Sign out</a>
-    </span>
-  </div>
-
-  <div id="empty" class="card" hidden>
-    <h2>No forecast data yet</h2>
-    <p class="note">Import the runway data file to get started. It is stored privately and only you can see it.</p>
-  </div>
-
-  <div id="forecast" hidden>
-    <h1 id="title">Cash Runway Forecast</h1>
-    <p class="sub" id="subtitle"></p>
-
-    <div class="card">
-      <div class="grid controls">
-        {fields.slice(0, 4).map((f) => (
-          <div><label for={f.id} data-label={f.id}></label><input type={f.type} id={f.id} step={f.step}></div>
-        ))}
-        <div><label>Variable spending / month</label><div style="font-size:22px;font-weight:650" id="varLbl"></div><div class="note">Edit by category in the budget section below ↓</div></div>
-        {fields.slice(4).map((f) => (
-          <div><label for={f.id} data-label={f.id}></label><input type={f.type} id={f.id} step={f.step}></div>
-        ))}
-      </div>
-      <p class="note" style="margin:10px 0 0" id="controlNote"></p>
-    </div>
-
-    <div class="card">
-      <details id="budgetBox">
-        <summary>Monthly budget by category — <span id="budgetTotal"></span> / month <span class="note" style="font-weight:400">(click to adjust)</span></summary>
-        <div class="btns" style="margin:10px 0">
-          <button type="button" data-preset="lean">Lean</button> <button type="button" data-preset="typical">Typical</button> <button type="button" data-preset="austere">Bare-bones</button>
-          <span class="note">Presets fill every box; then tweak any category. “Typical” = your average over the last 10 full months.</span>
-        </div>
-        <div id="budgetVs" style="margin:0 0 10px;font-weight:600"></div>
-        <div class="grid" id="budgetGrid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))"></div>
-        <p class="note" style="margin:10px 0 0">Amounts are per month and spread evenly across the days in the calendar. Fixed bills and subscriptions are separate (see “Recurring charges”).</p>
-      </details>
-    </div>
-
-    <div class="grid kpis" id="kpis" style="margin-bottom:16px"></div>
-
-    <div class="card">
-      <h2>Balance over the next 12 months</h2>
-      <div id="chart"></div>
-      <div class="legend"><span><i style="background:var(--accent)"></i>Projected balance</span><span><i style="background:var(--neg)"></i>Below $0</span><span><i style="background:var(--pay)"></i>Last severance paycheck</span></div>
-    </div>
-
-    <div class="card">
-      <h2>Runway under different severance outcomes</h2>
-      <table id="scen"></table>
-      <p class="note" style="margin:8px 0 0">Uses your current toggles and spending slider. "First dip" is the first day the balance goes below $0, even if a later paycheck brings it back up.</p>
-    </div>
-
-    <div class="card">
-      <h2>Calendar — what comes out and when</h2>
-      <div class="tabs" id="monthTabs"></div>
-      <div class="cal" id="cal"></div>
-      <div class="legend"><span><i style="background:var(--pay)"></i>Paycheck</span><span><i style="background:var(--accent)"></i>Bill / fixed</span><span><i style="background:var(--warn)"></i>Subscription</span><span>Bottom-right of each day = projected end-of-day balance</span></div>
-    </div>
-
-    <div class="card">
-      <h2>Recurring charges to review</h2>
-      <p class="note" style="margin-top:0">Checked = included in forecast. Items marked <span class="tag low">verify</span> were seen only once or twice or can't be identified from the statements.</p>
-      <div id="items"></div>
-    </div>
-
-    <div class="card">
-      <details open>
-        <summary>One-time items left out of the forecast</summary>
-        <table id="onetime" style="margin-top:8px"></table>
-      </details>
-    </div>
-
-    <div class="card">
-      <details open>
-        <summary>Caveats & things only you can confirm</summary>
-        <ul id="caveats"></ul>
-      </details>
-    </div>
-  </div>
-
-  <div class="card">
-    <details id="dataBox">
-      <summary>Data file</summary>
-      <p class="note">Download a backup of the forecast data and your current edits, or import a data file. Importing replaces the forecast and resets your edits.</p>
-      <div class="btns">
-        <button type="button" id="exportBtn">Download backup</button>
-        <label class="filebtn">Import data file<input type="file" id="importFile" accept="application/json,.json" hidden></label>
-      </div>
-    </details>
-  </div>
-</div>
-
-<script>
-  import '../scripts/runway.js';
-</script>
+<RunwayApp mode="private" />
 </body>
 </html>
-
-<style is:global>
-:root{
-  --bg:#f6f5f1; --card:#ffffff; --ink:#1d2327; --muted:#69727a; --line:#e3e1da;
-  --pos:#1a7f4b; --posbg:#e4f4ea; --neg:#c0392b; --negbg:#fbe6e3; --warn:#9a6700; --warnbg:#fff3d1;
-  --accent:#2f5d8a; --accentbg:#e5eef7; --pay:#1a7f4b;
-}
-@media (prefers-color-scheme: dark){
-  :root{ --bg:#14171a; --card:#1d2227; --ink:#e8eaec; --muted:#9aa3ab; --line:#2f363c;
-    --pos:#5fd08e; --posbg:#17301f; --neg:#ff7b6b; --negbg:#3a1d1a; --warn:#f0c453; --warnbg:#3a3015;
-    --accent:#7fb2e5; --accentbg:#1b2a3a; --pay:#5fd08e; }
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-a{color:var(--accent)}
-.wrap{max-width:1180px;margin:0 auto;padding:20px 16px 60px}
-.topbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:14px;font-size:14px}
-.topbar-right{margin-left:auto;display:flex;gap:12px;align-items:center}
-.topbar button,.btns button,.tabs button,.filebtn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:6px 10px;font:inherit;cursor:pointer}
-.filebtn{display:inline-block;font-size:15px;margin:0}
-h1{font-size:24px;margin:0 0 2px}
-h2{font-size:17px;margin:0 0 10px}
-.sub{color:var(--muted);margin:0 0 18px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
-.grid{display:grid;gap:12px}
-.kpis{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
-.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-.kpi .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-.kpi .v{font-size:26px;font-weight:650;margin-top:2px}
-.kpi .n{color:var(--muted);font-size:12px;margin-top:2px}
-.neg{color:var(--neg)} .pos{color:var(--pos)}
-.controls{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));align-items:end}
-label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
-input[type=number],input[type=date]{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
-.btns button:hover,.tabs button:hover,.topbar button:hover,.filebtn:hover{background:var(--accentbg)}
-.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
-.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
-td.num,th.num{text-align:right;white-space:nowrap}
-.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:99px;background:var(--accentbg);color:var(--accent)}
-.tag.low{background:var(--warnbg);color:var(--warn)}
-.tag.high{background:var(--posbg);color:var(--pos)}
-.note{color:var(--muted);font-size:13px}
-.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
-.cal .dow{font-size:12px;color:var(--muted);text-align:center;padding:2px}
-.day{min-height:104px;border:1px solid var(--line);border-radius:8px;padding:4px 5px;background:var(--card);overflow:hidden;font-size:12px;display:flex;flex-direction:column;gap:2px}
-.day.empty{background:transparent;border-color:transparent}
-.day .dn{font-weight:650;color:var(--muted)}
-.day.today{outline:2px solid var(--accent)}
-.chip{border-radius:5px;padding:1px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35}
-.chip.bill{background:var(--accentbg);color:var(--accent)}
-.chip.sub{background:var(--warnbg);color:var(--warn)}
-.chip.pay{background:var(--posbg);color:var(--pay);font-weight:600}
-.day .bal{margin-top:auto;font-weight:600;text-align:right}
-.day.neg{background:var(--negbg)}
-svg text{fill:var(--muted);font-size:11px}
-.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:6px 0 0}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
-details summary{cursor:pointer;font-weight:600}
-@media (max-width:700px){ .day{min-height:78px;font-size:10px} .chip{font-size:10px} .kpi .v{font-size:21px} }
-</style>
