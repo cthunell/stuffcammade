@@ -1,0 +1,27 @@
+{
+ "version": 2,
+ "checkins": [{ "date": "", "balance": 3850 }],
+ "income": [
+  { "id": "s-pay", "name": "Paycheck", "amount": 2150, "freq": "biweekly", "offsetDays": 6, "on": true }
+ ],
+ "bills": [
+  { "id": "s-rent", "name": "Rent / mortgage", "amount": 1450, "freq": "monthly", "day": 1, "on": true },
+  { "id": "s-elec", "name": "Electricity", "amount": 85, "freq": "monthly", "offsetDays": 8, "on": true },
+  { "id": "s-net", "name": "Internet", "amount": 60, "freq": "monthly", "offsetDays": 11, "on": true },
+  { "id": "s-phone", "name": "Phone", "amount": 75, "freq": "monthly", "offsetDays": 4, "on": true },
+  { "id": "s-car", "name": "Car payment", "amount": 340, "freq": "monthly", "offsetDays": 21, "on": true },
+  { "id": "s-ins", "name": "Car insurance", "amount": 130, "freq": "monthly", "offsetDays": 14, "on": true },
+  { "id": "s-stream", "name": "Streaming services", "amount": 28, "freq": "monthly", "offsetDays": 2, "on": true },
+  { "id": "s-gym", "name": "Gym / fitness", "amount": 45, "freq": "monthly", "offsetDays": 9, "on": true },
+  { "id": "s-loan", "name": "Student loan", "amount": 210, "freq": "monthly", "offsetDays": 24, "on": true }
+ ],
+ "categories": [
+  { "id": "c-groc", "name": "Groceries", "budget": 520 },
+  { "id": "c-dine", "name": "Dining out & coffee", "budget": 180 },
+  { "id": "c-gas", "name": "Gas & transportation", "budget": 160 },
+  { "id": "c-shop", "name": "Shopping", "budget": 120 },
+  { "id": "c-fun", "name": "Entertainment", "budget": 80 },
+  { "id": "c-home", "name": "Household supplies", "budget": 50 }
+ ],
+ "settings": { "mode": "monthly", "cushion": 500 }
+}

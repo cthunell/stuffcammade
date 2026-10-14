@@ -11,11 +11,17 @@ function redis() {
   return client;
 }
 
-const DATA_KEY = 'runway:data';
-const STATE_KEY = 'runway:state';
+// Each signed-in person's Runway document, keyed by their email.
+const docKey = (email: string) => `runway:v2:${email.toLowerCase()}`;
+export const getDoc = (email: string) => redis().get<Record<string, unknown>>(docKey(email));
+export const setDoc = (email: string, doc: Record<string, unknown>) => redis().set(docKey(email), doc);
+export const deleteDoc = (email: string) => redis().del(docKey(email));
 
-export const getData = () => redis().get<Record<string, unknown>>(DATA_KEY);
-export const setData = (data: Record<string, unknown>) => redis().set(DATA_KEY, data);
-export const getState = () => redis().get<Record<string, unknown>>(STATE_KEY);
-export const setState = (state: Record<string, unknown>) => redis().set(STATE_KEY, state);
-export const clearState = () => redis().del(STATE_KEY);
+// The first version stored one shared forecast plus edits. Read only, to bring it over.
+export const getLegacy = async () => {
+  const [data, state] = await Promise.all([
+    redis().get<Record<string, unknown>>('runway:data'),
+    redis().get<Record<string, unknown>>('runway:state'),
+  ]);
+  return data ? { data, state } : null;
+};

@@ -1,0 +1,245 @@
+// Runway forecast engine. Pure functions, no DOM, so it can be tested in Node.
+//
+// A Runway document:
+// {
+//   version: 2,
+//   checkins:   [{ date: 'YYYY-MM-DD', balance: number }],   // newest last
+//   income:     [{ id, name, amount, freq, start: 'YYYY-MM-DD', end?: 'YYYY-MM-DD', on?: boolean }],
+//   bills:      [{ id, name, category?, amount, freq, start, end?, on?: boolean }],
+//   categories: [{ id, name, budget }],                        // monthly everyday-spending budgets
+//   settings:   { mode: 'monthly' | 'runway', cushion: number },
+// }
+// freq: 'once' | 'weekly' | 'biweekly' | 'semimonthly' | 'monthly' | 'quarterly' | 'yearly'.
+// `start` anchors the schedule: the first date for weekly/biweekly/once, and the day of the
+// month (and month, for quarterly/yearly) for the rest. Semimonthly is the 1st and 15th.
+
+export const FREQS = [
+  ['monthly', 'Monthly'],
+  ['biweekly', 'Every 2 weeks'],
+  ['weekly', 'Weekly'],
+  ['semimonthly', 'Twice a month (1st & 15th)'],
+  ['quarterly', 'Every 3 months'],
+  ['yearly', 'Yearly'],
+  ['once', 'One time'],
+];
+
+export const emptyDoc = () => ({
+  version: 2,
+  checkins: [],
+  income: [],
+  bills: [],
+  categories: [],
+  settings: { mode: 'monthly', cushion: 0 },
+});
+
+// ---------- dates (UTC, day precision) ----------
+export const D = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+export const iso = (d) => d.toISOString().slice(0, 10);
+export const addDays = (d, n) => new Date(d.getTime() + n * 864e5);
+export const daysBetween = (a, b) => Math.round((D(b) - D(a)) / 864e5);
+const dim = (y, m0) => new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate();
+export const todayIso = (now = new Date()) => iso(new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())));
+export const monthEnd = (s) => { const d = D(s); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0))); };
+
+// Does a schedule hit on day `s`? Monthly-style schedules repeat on the anchor's day of the
+// month (or `day`, when set, so a 31st bill still lands on the last day of short months).
+export function hits(item, s) {
+  if (item.on === false || !item.start || !(item.amount > 0)) return false;
+  if (s < item.start || (item.end && s > item.end)) return false;
+  const d = D(s), a = D(item.start);
+  const day = d.getUTCDate(), m0 = d.getUTCMonth();
+  const aDay = Math.min(item.day || a.getUTCDate(), dim(d.getUTCFullYear(), m0)), aM0 = a.getUTCMonth();
+  switch (item.freq) {
+    case 'once': return s === item.start;
+    case 'weekly': return daysBetween(item.start, s) % 7 === 0;
+    case 'biweekly': return daysBetween(item.start, s) % 14 === 0;
+    case 'semimonthly': return day === 1 || day === 15;
+    case 'monthly': return day === aDay;
+    case 'quarterly': return (((m0 - aM0) % 3) + 3) % 3 === 0 && day === aDay;
+    case 'yearly': return m0 === aM0 && day === aDay;
+    default: return false;
+  }
+}
+
+// Average monthly amount of a schedule (for "per month" summaries).
+export function perMonth(item) {
+  if (item.on === false) return 0;
+  const k = { weekly: 52 / 12, biweekly: 26 / 12, semimonthly: 2, monthly: 1, quarterly: 1 / 3, yearly: 1 / 12, once: 0 }[item.freq] ?? 0;
+  return (+item.amount || 0) * k;
+}
+
+export const budgetTotal = (doc) => doc.categories.reduce((a, c) => a + (+c.budget || 0), 0);
+export const latestCheckin = (doc) => doc.checkins.length ? doc.checkins[doc.checkins.length - 1] : null;
+
+// Events (income and bills) on day `s`.
+export function eventsOn(doc, s, { noIncomeFrom } = {}) {
+  const ev = [];
+  for (const it of doc.income) if (hits(it, s) && !(noIncomeFrom && s >= noIncomeFrom)) ev.push({ kind: 'income', name: it.name, amount: +it.amount });
+  for (const b of doc.bills) if (hits(b, s)) ev.push({ kind: 'bill', name: b.name, amount: -b.amount, id: b.id, category: b.category });
+  return ev;
+}
+
+// Day-by-day balance from the latest check-in. Returns rows from `from` (default today).
+// opts: { days, noIncomeFrom, skipBill, budgetScale, today }
+export function simulate(doc, opts = {}) {
+  const today = opts.today || todayIso();
+  const last = latestCheckin(doc);
+  if (!last) return [];
+  const daily = budgetTotal(doc) * (opts.budgetScale ?? 1) * 12 / 365;
+  const startDay = last.date < today ? last.date : today;
+  const days = opts.days ?? 365;
+  const out = [];
+  let bal = last.balance;
+  // The check-in balance is end-of-day for its date, so start the next day.
+  for (let d = addDays(D(startDay), 1); out.length < days; d = addDays(d, 1)) {
+    const s = iso(d);
+    const ev = eventsOn(doc, s, opts).filter((e) => e.id === undefined || e.id !== opts.skipBill);
+    const net = ev.reduce((a, e) => a + e.amount, 0) - daily;
+    bal += net;
+    if (s > today || (s === today && last.date < today)) out.push({ s, bal, ev });
+  }
+  return out;
+}
+
+export function firstBelow(rows, line = 0) {
+  const r = rows.find((x) => x.bal < line);
+  return r ? r.s : null;
+}
+
+// Next income date after today (null if none within a year).
+export function nextPayday(doc, today = todayIso()) {
+  for (let i = 1; i <= 366; i++) {
+    const s = iso(addDays(D(today), i));
+    if (doc.income.some((it) => hits(it, s))) return s;
+  }
+  return null;
+}
+
+function sumEvents(doc, from, to, kind) {
+  let t = 0;
+  for (let d = D(from); iso(d) <= to; d = addDays(d, 1)) {
+    for (const e of eventsOn(doc, iso(d))) if (e.kind === kind) t += Math.abs(e.amount);
+  }
+  return t;
+}
+
+// Everything the Monthly dashboard shows.
+// The daily number is the most you could spend every day, on average, without the balance
+// dropping below the safety cushion before the end of next month, given known income and bills.
+export function monthly(doc, today = todayIso()) {
+  const last = latestCheckin(doc);
+  const cushion = +doc.settings.cushion || 0;
+  const balance = last ? last.balance : 0;
+  const payday = nextPayday(doc, today);
+  const nextMonthEnd = monthEnd(iso(addDays(D(monthEnd(today)), 1)));
+  let perDay = Infinity, running = balance - cushion, t = 0;
+  for (let d = addDays(D(today), 1); iso(d) <= nextMonthEnd; d = addDays(d, 1)) {
+    t += 1;
+    for (const e of eventsOn(doc, iso(d))) running += e.amount;
+    perDay = Math.min(perDay, running / t);
+  }
+  if (!isFinite(perDay)) perDay = running;
+  // Spending is counted from tomorrow; today's spending is assumed to be in the check-in balance
+  // when the check-in is today, otherwise today counts too.
+  const untilPayday = payday ? daysBetween(today, payday) : null;
+  const mEnd = monthEnd(today), mStart = today.slice(0, 8) + '01', tomorrow = iso(addDays(D(today), 1));
+  const rows = simulate(doc, { today, days: daysBetween(today, mEnd) + 1 });
+  const endRow = rows.find((r) => r.s === mEnd);
+  return {
+    balance,
+    payday,
+    untilPayday,
+    perDay,
+    incomeThisMonth: sumEvents(doc, mStart, mEnd, 'income'),
+    billsLeftThisMonth: today < mEnd ? sumEvents(doc, tomorrow, mEnd, 'bill') : 0,
+    budget: budgetTotal(doc),
+    endOfMonth: endRow ? endRow.bal : balance,
+  };
+}
+
+// Bills people can't realistically cut aren't suggested as levers.
+const ESSENTIAL = /rent|mortgage|insurance|loan|tax|irs|electric|power|gas|water|sewer|trash|utilit|child|alimony|car payment|credit card/i;
+export const isEssential = (b) => ESSENTIAL.test(`${b.category || ''} ${b.name}`);
+
+// Everything Runway mode shows: how long the money lasts if income stopped tomorrow.
+export function runway(doc, today = todayIso()) {
+  const line = +doc.settings.cushion || 0;
+  const base = { today, days: 730, noIncomeFrom: iso(addDays(D(today), 1)) };
+  const rows = simulate(doc, base);
+  const out = firstBelow(rows, line);
+  const days = out ? daysBetween(today, out) : null;
+  const gain = (alt) => {
+    const o = firstBelow(simulate(doc, { ...base, ...alt }), line);
+    return o === null ? Infinity : daysBetween(today, o) - (days ?? 0);
+  };
+  const levers = out === null ? [] : [
+    ...doc.bills.filter((b) => b.on !== false && perMonth(b) > 0 && !isEssential(b)).map((b) => ({ label: `Cut ${b.name}`, sub: `${Math.round(perMonth(b))} / month`, days: gain({ skipBill: b.id }) })),
+    ...(budgetTotal(doc) > 0 ? [{ label: 'Trim everyday spending by 20%', sub: `${Math.round(budgetTotal(doc) * 0.2)} / month`, days: gain({ budgetScale: 0.8 }) }] : []),
+  ].filter((l) => l.days > 0).sort((a, b) => b.days - a.days).slice(0, 3);
+  const burn = doc.bills.reduce((a, b) => a + perMonth(b), 0) + budgetTotal(doc);
+  return { out, days, months: days === null ? null : days / 30.44, burn, levers };
+}
+
+// Spending inferred between the last two check-ins: what left the account that isn't a known bill.
+export function sinceLastCheckin(doc) {
+  const n = doc.checkins.length;
+  if (n < 2) return null;
+  const a = doc.checkins[n - 2], b = doc.checkins[n - 1];
+  const days = daysBetween(a.date, b.date);
+  if (days <= 0) return null;
+  let income = 0, bills = 0;
+  for (let d = addDays(D(a.date), 1); iso(d) <= b.date; d = addDays(d, 1)) {
+    for (const e of eventsOn(doc, iso(d))) e.kind === 'income' ? (income += e.amount) : (bills += -e.amount);
+  }
+  const spent = a.balance + income - bills - b.balance;
+  const budgeted = budgetTotal(doc) * 12 / 365 * days;
+  return { from: a.date, to: b.date, days, spent, budgeted };
+}
+
+// Convert the first Runway data file (version 1) into a version 2 document.
+export function fromLegacy(old, saved) {
+  const doc = emptyDoc();
+  const inputs = { ...old.defaults, ...saved?.inputs };
+  const on = saved?.on || {};
+  const budget = saved?.budget || {};
+  const S = old.settings || {};
+  const start = S.start && S.start !== 'today' ? S.start : todayIso();
+  const asOf = S.today || iso(addDays(D(start), -1));
+  doc.checkins.push({ date: asOf, balance: (+inputs.startBal || 0) + (+inputs.cash || 0) + (+inputs.venmoBal || 0) });
+  const id = () => Math.random().toString(36).slice(2, 9);
+  if (+inputs.payAmt > 0 && S.firstPay) {
+    const end = typeof inputs.sevEnd === 'string' ? inputs.sevEnd : undefined;
+    doc.income.push({ id: id(), name: 'Paycheck', amount: +inputs.payAmt, freq: S.payEveryDays === 7 ? 'weekly' : 'biweekly', start: S.firstPay, ...(end ? { end } : {}) });
+  }
+  if (+inputs.ui > 0 && typeof inputs.sevEnd === 'string') {
+    doc.income.push({ id: id(), name: 'Unemployment', amount: +inputs.ui, freq: 'weekly', start: iso(addDays(D(inputs.sevEnd), 14)) });
+  }
+  const month = start.slice(0, 7);
+  const pad = (n) => String(n).padStart(2, '0');
+  for (const it of old.items || []) {
+    const r = it.rule || {};
+    const amount = it.amts ? it.amts.reduce((a, b) => a + b, 0) / 12 : Math.abs(+it.amt || 0);
+    const isOn = on[it.id] ?? (it.on !== false);
+    const base = { name: it.name.replace(/^INCOME: /, ''), amount: Math.round(amount * 100) / 100, on: isOn };
+    const range = { ...(r.to ? { end: monthEnd(r.to + '-01') } : {}) };
+    const target = it.amt < 0 ? doc.income : doc.bills;
+    const add = (o) => target.push({ id: id(), ...base, ...o, ...range });
+    if (r.m != null) {
+      const from = r.from || month;
+      const [y, m] = from.split('-').map(Number);
+      add({ freq: 'monthly', day: r.m, start: `${from}-${pad(Math.min(r.m, dim(y, m - 1)))}` });
+    }
+    else if (r.months) {
+      const ms = [...r.months].sort((a, b) => a - b);
+      if (ms.length === 4 && ms.every((m, i) => i === 0 || m - ms[i - 1] === 3)) add({ freq: 'quarterly', start: `${start.slice(0, 4)}-${pad(ms[0])}-${pad(r.d)}` });
+      else ms.forEach((m) => add({ freq: 'yearly', start: `${start.slice(0, 4)}-${pad(m)}-${pad(r.d)}` }));
+    } else if (r.dates) r.dates.forEach((s) => add({ freq: 'once', start: s }));
+  }
+  for (const b of old.budget || []) doc.categories.push({ id: b[0], name: b[1], budget: +(budget[b[0]] ?? b[3]) || 0 });
+  return doc;
+}
+
+// Light shape check for documents that come from storage or an imported file.
+export function isDoc(x) {
+  return !!x && x.version === 2 && ['checkins', 'income', 'bills', 'categories'].every((k) => Array.isArray(x[k])) && typeof x.settings === 'object';
+}
