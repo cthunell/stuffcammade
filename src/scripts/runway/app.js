@@ -1,7 +1,7 @@
 // Runway app UI. One document per person; every change saves automatically.
 // "private" mode stores it through /api/runway (signed in); "demo" keeps it in this browser.
 import * as E from './engine.js';
-import { BILLS, CATEGORIES, INCOME, GOALS, SAVINGS_BY_DEFAULT } from './catalog.js';
+import { BILLS, CATEGORIES, INCOME, GOALS, SAVINGS_BY_DEFAULT, ACCOUNTS } from './catalog.js';
 
 const root = document.getElementById('runway');
 const MODE = root.dataset.mode;
@@ -44,8 +44,14 @@ const store = MODE === 'demo' ? {
   async erase() { return (await fetch('/api/runway', { method: 'DELETE' })).ok; },
 };
 
-const normalize = (d) => ({ ...E.emptyDoc(), ...d, goals: d.goals || [], settings: { ...E.emptyDoc().settings, ...d.settings } });
-let doc = E.emptyDoc();
+// Older documents had one balance; it becomes a "Checking" spending account.
+const normalize = (d) => ({
+  ...E.emptyDoc(), ...d,
+  goals: d.goals || [], portfolio: d.portfolio || [],
+  accounts: d.accounts?.length ? d.accounts : [{ id: 'checking', name: 'Checking', kind: 'spending' }],
+  settings: { ...E.emptyDoc().settings, ...d.settings },
+});
+let doc = normalize(E.emptyDoc());
 let legacy = null;
 let focusNext = null; // element id to focus after the next render
 const status = (t) => { $('#saveStatus').textContent = t; };
@@ -85,7 +91,7 @@ addEventListener('pointerup', () => {
 }, true);
 
 // ---------- views ----------
-const VIEWS = { dashboard: 'Dashboard', checkin: 'Check-in', bills: 'Bills', income: 'Income', budget: 'Everyday budget', goals: 'Savings & goals', settings: 'Settings' };
+const VIEWS = { dashboard: 'Dashboard', checkin: 'Check-in', bills: 'Bills', income: 'Income', budget: 'Everyday budget', goals: 'Savings & goals', investments: 'Investments', settings: 'Settings' };
 const current = () => (location.hash.slice(1) in VIEWS ? location.hash.slice(1) : 'dashboard');
 addEventListener('hashchange', () => { render(); scrollTo({ top: 0 }); });
 
@@ -101,7 +107,8 @@ function render() {
   const due = $('[data-nav="checkin"] .due');
   const last = E.latestCheckin(doc);
   if (due) due.hidden = !!last && E.daysBetween(last.date, today()) < 7;
-  view.innerHTML = { dashboard, checkin, bills, income, budget, goals, settings }[v]();
+  view.innerHTML = { dashboard, checkin, bills, income, budget, goals, investments, settings }[v]();
+  if (v === 'investments') drawPortfolio();
   if (v === 'dashboard') drawChart();
   const el = active && document.getElementById(active);
   if (el && view.contains(el)) {
@@ -203,10 +210,10 @@ function dashboard() {
   const setAside = E.setAsideTotal(doc), saving = E.savingTotal(doc);
 
   const hero = runwayMode ? `
-      <div class="eyebrow">If your income stopped tomorrow</div>
+      <div class="eyebrow">With your income and bills as scheduled</div>
       ${r.out ? `<div class="big">Money lasts until <span class="${r.days < 90 ? 'bad' : 'good'}">${dateLabel(r.out, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
-      <p>About <b>${r.months < 1 ? r.days + ' days' : r.months.toFixed(1) + ' months'}</b> on ${money(r.cash)} in checking${E.savingsTotal(doc) ? ' and savings' : ''}, spending ${money(r.burn)} a month on bills and everyday costs${cushion ? `, keeping ${money(cushion)} as a cushion` : ''}.${doc.goals.length ? ' Goal contributions are paused.' : ''}</p>`
-    : `<div class="big">Your money lasts <span class="good">2+ years</span></div><p>Even with no income, your balance stays above ${money(cushion)} for at least two years.</p>`}` : `
+      <p>About <b>${r.months < 1 ? r.days + ' days' : r.months.toFixed(1) + ' months'}</b> on ${money(r.cash)} available${setAside ? ` (not counting ${money(setAside)} set aside for goals)` : ''}, spending ${money(r.burn)} a month on bills and everyday costs${cushion ? `, keeping ${money(cushion)} as a cushion` : ''}. Income counts only as long as it’s scheduled, so set an end date on income that will stop.</p>`
+    : `<div class="big">Your money lasts <span class="good">2+ years</span></div><p>With your income as scheduled, your available balance stays above ${money(cushion)} for at least two years.</p>`}` : `
       <div class="eyebrow">Aim to spend under</div>
       ${m.perDay > 0 ? `<div class="big"><span class="good">${money(m.perDay)}</span> a day</div>
       <p>On average, for everyday spending. That keeps you above ${money(cushion)} through the end of next month, after bills${saving ? ', savings' : ''} and income.${m.payday ? ` Until your next paycheck on ${dateLabel(m.payday)}, that’s about <b>${money(m.perDay * m.untilPayday)}</b>.` : ''}</p>`
@@ -214,12 +221,12 @@ function dashboard() {
       <p>Your bills${saving ? ' and savings' : ''} before the end of next month are more than your available balance and income, so there’s no room for everyday spending. <button class="linkbtn" type="button" data-act="mode-runway">Switch to Runway mode</button> to see how long your money lasts and what would stretch it.</p>`}`;
 
   const kpis = runwayMode ? [
-    ['Cash today', money(r.cash), E.savingsTotal(doc) ? `Checking plus ${money(E.savingsTotal(doc))} savings` : `As of ${dateLabel(last.date)}`],
+    ['Available', money(r.cash), setAside ? `${money(last.balance)} in spending accounts, ${money(setAside)} set aside` : `As of ${dateLabel(last.date)}`],
     ['Monthly burn', money(r.burn), 'Bills plus everyday budget'],
-    ['Runway', r.out ? (r.months < 1 ? `${r.days} days` : `${r.months.toFixed(1)} mo`) : '2+ years', r.out ? `Until ${dateLabel(r.out)}` : 'With no income'],
+    ['Runway', r.out ? (r.months < 1 ? `${r.days} days` : `${r.months.toFixed(1)} mo`) : '2+ years', r.out ? `Until ${dateLabel(r.out)}` : 'With income as scheduled'],
     ['Safety cushion', money(cushion), cushion ? 'Treated as empty' : 'Set one in Settings'],
   ] : [
-    ['Available', money(m.balance), setAside ? `${money(last.balance)} in checking, ${money(setAside)} set aside` : `As of ${dateLabel(last.date)}`],
+    ['Available', money(m.balance), setAside ? `${money(last.balance)} in spending accounts, ${money(setAside)} set aside` : `As of ${dateLabel(last.date)}`],
     ['Income this month', money(m.incomeThisMonth), m.payday ? `Next ${dateLabel(m.payday)}` : 'No upcoming income'],
     ['Bills left this month', money(m.billsLeftThisMonth), `Through ${dateLabel(E.monthEnd(today()))}`],
     ['End of month', money(m.endOfMonth), `Available, with ${money(m.budget)} everyday budget`, m.endOfMonth < cushion ? 'bad' : ''],
@@ -267,26 +274,36 @@ function dashboard() {
     </section>
     <section class="kpis">${kpis.map(([l, v, n, cls]) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v ${cls || ''}">${v}</span><span class="n">${n}</span></div>`).join('')}</section>
     <section class="panel chart">
-      <div class="chart-head"><h2>${runwayMode ? 'Cash' : 'Available balance'}: ${doc.checkins.length > 1 ? 'actual and ' : ''}forecast</h2>
-        <div class="legend">${doc.checkins.length > 1 ? '<span><i class="k-actual"></i>Your check-ins</span>' : ''}<span><i class="k-fore"></i>Forecast</span>${runwayMode ? '<span><i class="k-none"></i>No income from tomorrow</span>' : ''}${cushion ? `<span><i class="k-cush"></i>Cushion ${money(cushion)}</span>` : ''}</div></div>
+      <div class="chart-head"><h2>Balance: ${doc.checkins.length > 1 ? 'actual and ' : ''}forecast</h2>
+        <div class="legend">${doc.checkins.length > 1 ? '<span><i class="k-actual"></i>Your check-ins</span>' : ''}<span><i class="k-fore"></i>Available forecast${setAside ? ` (leaves out ${money(setAside)} set aside)` : ''}</span>${cushion ? `<span><i class="k-cush"></i>Cushion ${money(cushion)}</span>` : ''}</div></div>
       <div id="chart"></div>
     </section>
+    ${calendarPanel()}
     <div class="two">${bottom}</div>
     ${goalsPanel}`;
 }
 
+function spentNote(since) {
+  if (!since) return '';
+  if (since.spent < 0) return `Between your last two check-ins your balance came in <b>${money(-since.spent)} higher</b> than bills and income explain. If money came in that isn’t listed under Income, that’s why.`;
+  const diff = since.budgeted - since.spent;
+  return `Between your last two check-ins you spent about <b>${money(since.spent)}</b> on everyday things, <span class="delta ${diff < 0 ? 'bad' : ''}">${money(Math.abs(diff))} ${diff < 0 ? 'over' : 'under'} budget</span>.`;
+}
+
+const balanceInput = (a, lv, form) => `<input id="v-${a.id}" ${form ? `form="${form}"` : ''} class="money" data-acct-value="${a.id}" inputmode="decimal" placeholder="${lv[a.id] ? esc(money(lv[a.id].value, true)) : '$0.00'}" autocomplete="off" aria-label="${esc(a.name)} balance">`;
+
 function checkinMini(since) {
   const last = E.latestCheckin(doc);
   const ago = E.daysBetween(last.date, today());
-  let note = `Last check-in ${ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago'}.`;
-  if (since) {
-    const diff = since.budgeted - since.spent;
-    note += ` Between your last two check-ins you spent about <b>${money(Math.max(0, since.spent))}</b> on everyday things, <span class="delta ${diff < 0 ? 'bad' : ''}">${money(Math.abs(diff))} ${diff < 0 ? 'over' : 'under'} budget</span>.`;
-  }
+  const sp = E.spendingAccounts(doc), lv = E.latestValues(doc);
+  const ask = ago >= 7 ? 'Time for a check-in' : 'Check in';
   return `<form class="checkin" data-form="quick-checkin">
-      <label for="qBal">${ago >= 7 ? 'Time for a check-in: what’s' : 'Check in: what’s'} in checking today?</label>
-      <div class="row"><input id="qBal" name="balance" inputmode="decimal" placeholder="${esc(money(last.balance, true))}" autocomplete="off" required><button class="btn" type="submit">Update</button></div>
-      <div class="note">${note}</div>
+      ${sp.length === 1 ? `<label for="v-${sp[0].id}">${ask}: what’s in ${esc(sp[0].name)} today?</label>
+        <div class="row">${balanceInput(sp[0], lv)}<button class="btn" type="submit">Update</button></div>`
+      : `<span class="lbl">${ask}: what’s in your spending accounts today?</span>
+        <div class="acct-rows">${sp.map((a) => `<label class="acct-row"><span>${esc(a.name)}</span>${balanceInput(a, lv)}</label>`).join('')}</div>
+        <div class="row"><button class="btn" type="submit">Update</button><span class="note">Leave any blank to keep its last balance.</span></div>`}
+      <div class="note">Last check-in ${ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago'}. ${spentNote(since)}</div>
     </form>`;
 }
 
@@ -294,21 +311,92 @@ function checkinMini(since) {
 function checkin() {
   const since = E.sinceLastCheckin(doc);
   const rows = [...doc.checkins].reverse();
+  const lv = E.latestValues(doc);
+  const group = (kind) => {
+    const list = kind === 'spending' ? E.spendingAccounts(doc) : E.investmentAccounts(doc);
+    return list.map((a) => `<tr data-acct="${a.id}">
+        <td><input id="a${a.id}-name" data-f="name" value="${esc(a.name)}" maxlength="40" aria-label="Account name"></td>
+        <td class="muted small">${lv[a.id] ? `${money(lv[a.id].value, true)} on ${dateLabel(lv[a.id].date)}` : 'No balance yet'}</td>
+        <td class="num">${balanceInput(a, lv, 'ci-form')}</td>
+        <td><select id="a${a.id}-kind" data-f="kind" aria-label="Kind of account"><option value="spending" ${kind === 'spending' ? 'selected' : ''}>Spending</option><option value="investment" ${kind === 'investment' ? 'selected' : ''}>Investment</option></select></td>
+        <td class="num"><button class="x" type="button" data-act="del-acct" aria-label="Remove ${esc(a.name)}">×</button></td></tr>`).join('')
+      || `<tr><td colspan="5" class="muted small">${kind === 'spending' ? 'No spending accounts. Add checking below.' : 'None yet. Add a 401(k), IRA or brokerage account below to track it on the Investments tab.'}</td></tr>`;
+  };
   return top() + `
     <section class="panel">
-      <h2>Update your balance</h2>
-      <p class="muted">Add up checking and any cash you’d spend from. Leave out separate savings accounts; those live in Savings & goals. Checking in weekly or monthly keeps the forecast honest and shows how your spending tracks against your budget.</p>
-      <form class="form-row" data-form="checkin">
-        <label>Date<input id="ciDate" type="date" name="date" value="${today()}" max="${today()}" required></label>
-        <label>Checking balance<input id="ciBal" name="balance" inputmode="decimal" placeholder="$0.00" required autocomplete="off"></label>
-        <button class="btn" type="submit">Save check-in</button>
+      <h2>Update your balances</h2>
+      <p class="muted">Enter today’s balance for each account you want to update; blank ones keep their last balance. <b>Spending</b> accounts (checking, Venmo, cash) add up to the money you can spend and drive the forecast. <b>Investment</b> accounts are tracked on the Investments tab and never count as spendable. Separate savings accounts live in Savings & goals.</p>
+      <form id="ci-form" data-form="checkin"></form>
+      <div class="tbl-wrap"><table class="tbl edit accts">
+        <thead><tr><th>Spending accounts</th><th>Last balance</th><th class="num">Today’s balance</th><th>Kind</th><th></th></tr></thead>
+        <tbody>${group('spending')}</tbody>
+        <thead><tr><th>Investment accounts</th><th></th><th></th><th></th><th></th></tr></thead>
+        <tbody>${group('investment')}</tbody>
+      </table></div>
+      <div class="form-row ci-save"><label>Date<input id="ciDate" form="ci-form" type="date" name="date" value="${today()}" max="${today()}" required></label><button class="btn" type="submit" form="ci-form">Save check-in</button></div>
+      ${since ? `<p class="callout">From ${dateLabel(since.from)} to ${dateLabel(since.to)}: ${spentNote(since).replace('Between your last two check-ins ', '')} Your everyday budget for those ${since.days} days was ${money(since.budgeted)}.</p>` : ''}
+      <form class="form-row add-acct" data-form="new-acct">
+        <datalist id="acct-names">${[...ACCOUNTS.spending, ...ACCOUNTS.investment].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+        <label>Add an account<input id="anew-name" name="name" list="acct-names" maxlength="40" placeholder="e.g. Venmo or Roth IRA" required></label>
+        <label>Kind<select id="anew-kind" name="kind"><option value="spending">Spending (counts toward available)</option><option value="investment">Investment (tracked only)</option></select></label>
+        <button class="btn ghost" type="submit">Add account</button>
       </form>
-      ${since ? `<p class="callout">From ${dateLabel(since.from)} to ${dateLabel(since.to)}, about <b>${money(Math.max(0, since.spent))}</b> went to everyday spending (after known bills, income and savings transfers). Your budget for those ${since.days} days was ${money(since.budgeted)}.</p>` : ''}
     </section>
     <section class="panel"><h2>History</h2>
-      ${rows.length ? `<table class="tbl"><thead><tr><th>Date</th><th class="num">Balance</th><th></th></tr></thead><tbody>${rows.map((c) => `<tr><td>${dateLabel(c.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</td><td class="num">${money(c.balance, true)}</td><td class="num"><button class="linkbtn" type="button" data-act="del-checkin" data-date="${c.date}">Remove</button></td></tr>`).join('')}</tbody></table>`
+      ${rows.length ? `<table class="tbl"><thead><tr><th>Date</th><th>Accounts</th><th class="num">Spending total</th><th></th></tr></thead><tbody>${rows.map((c) => `<tr><td>${dateLabel(c.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</td><td class="muted small">${c.by ? Object.entries(c.by).map(([id, v]) => `${esc(doc.accounts.find((a) => a.id === id)?.name || 'Removed account')} ${money(v)}`).join(' · ') : ''}</td><td class="num">${money(c.balance, true)}</td><td class="num"><button class="linkbtn" type="button" data-act="del-checkin" data-date="${c.date}">Remove</button></td></tr>`).join('')}</tbody></table>`
         : '<p class="muted">No check-ins yet.</p>'}
     </section>`;
+}
+
+// ---------- investments ----------
+const pct = (a, b) => (b ? ` (${a >= 0 ? '+' : '−'}${Math.abs(a / b * 100).toFixed(1)}%)` : '');
+const change = (a, b) => `<span class="${a < 0 ? 'bad' : a > 0 ? 'good' : ''}">${a >= 0 ? '+' : ''}${money(a)}${pct(a, b)}</span>`;
+function investments() {
+  const inv = E.investmentAccounts(doc), hist = E.portfolioHistory(doc), lv = E.latestValues(doc);
+  const addForm = `<form class="form-row" data-form="new-acct"><input type="hidden" name="kind" value="investment">
+      <datalist id="inv-names">${ACCOUNTS.investment.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+      <label>Add an investment account<input id="inew-acct" name="name" list="inv-names" maxlength="40" placeholder="e.g. 401(k)" required></label><button class="btn ghost" type="submit">Add</button></form>`;
+  if (!inv.length) return top() + `<section class="panel"><h2>Track your investments</h2><p class="muted">Add retirement and investing accounts to see how they’re doing over time. They’re kept separate from your spending money and never count toward your available balance or runway.</p>${addForm}</section>`;
+  const lastH = hist[hist.length - 1], prevH = hist[hist.length - 2], firstH = hist[0];
+  const perAcct = (id) => (doc.portfolio || []).filter((p) => id in p.values).map((p) => ({ date: p.date, v: p.values[id] }));
+  return top() + `
+    ${hist.length ? `<section class="kpis three">
+      <div class="kpi"><span class="eyebrow">Total value</span><span class="v">${money(lastH.total)}</span><span class="n">As of ${dateLabel(lastH.date)}</span></div>
+      <div class="kpi"><span class="eyebrow">Since last update</span><span class="v">${prevH ? change(lastH.total - prevH.total, prevH.total) : '—'}</span><span class="n">${prevH ? `Since ${dateLabel(prevH.date)}` : 'Update again to see a change'}</span></div>
+      <div class="kpi"><span class="eyebrow">Since you started</span><span class="v">${hist.length > 1 ? change(lastH.total - firstH.total, firstH.total) : '—'}</span><span class="n">Since ${dateLabel(firstH.date, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
+    </section>` : ''}
+    ${hist.length > 1 ? '<section class="panel chart"><div class="chart-head"><h2>Total value</h2></div><div id="pchart"></div></section>' : ''}
+    <section class="panel">
+      <h2>Update values</h2>
+      <form id="inv-form" data-form="checkin"></form>
+      <div class="tbl-wrap"><table class="tbl edit">
+        <thead><tr><th>Account</th><th class="num">Last value</th><th class="num">Since previous</th><th class="num">Since first</th><th class="num">New value</th></tr></thead>
+        <tbody>${inv.map((a) => { const h = perAcct(a.id), l = h[h.length - 1], p = h[h.length - 2], f = h[0];
+          return `<tr><td>${esc(a.name)}</td><td class="num">${l ? `${money(l.v)}<div class="s">${dateLabel(l.date)}</div>` : '<span class="muted">—</span>'}</td>
+            <td class="num">${p ? change(l.v - p.v, p.v) : '—'}</td><td class="num">${h.length > 1 ? change(l.v - f.v, f.v) : '—'}</td>
+            <td class="num">${balanceInput(a, lv, 'inv-form')}</td></tr>`; }).join('')}</tbody>
+      </table></div>
+      <div class="form-row"><label>Date<input id="invDate" form="inv-form" type="date" name="date" value="${today()}" max="${today()}" required></label><button class="btn" type="submit" form="inv-form">Save values</button></div>
+      <p class="muted small">Changes include any money you put in, so they aren’t pure investment returns. Updating once a month is plenty.</p>
+      ${addForm}
+    </section>`;
+}
+
+function drawPortfolio() {
+  const el = document.getElementById('pchart');
+  if (!el) return;
+  const hist = E.portfolioHistory(doc);
+  const W = 1000, H = 220, pl = 70, pr = 14, pt = 12, pb = 28;
+  let lo = Math.min(...hist.map((h) => h.total)), hi = Math.max(...hist.map((h) => h.total));
+  const pad = (hi - lo) * 0.1 || hi * 0.05 || 100; lo -= pad; hi += pad;
+  const a = hist[0].date, span = Math.max(1, E.daysBetween(a, hist[hist.length - 1].date));
+  const x = (s) => pl + E.daysBetween(a, s) / span * (W - pl - pr), y = (v) => pt + (hi - v) * (H - pt - pb) / (hi - lo);
+  let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Investment value over time">`;
+  for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * i / 4; g += `<line x1="${pl}" x2="${W - pr}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid"/><text x="${pl - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${money(v)}</text>`; }
+  g += `<polyline points="${hist.map((h) => `${x(h.date).toFixed(1)},${y(h.total).toFixed(1)}`).join(' ')}" class="fore"/>`;
+  hist.forEach((h) => { g += `<circle cx="${x(h.date).toFixed(1)}" cy="${y(h.total).toFixed(1)}" r="4" class="dot"><title>${dateLabel(h.date, { month: 'short', day: 'numeric', year: 'numeric' })}: ${money(h.total)}</title></circle>`; });
+  [hist[0], hist[hist.length - 1]].forEach((h, i) => { g += `<text x="${x(h.date).toFixed(1)}" y="${H - 8}" text-anchor="${i ? 'end' : 'start'}">${dateLabel(h.date, { month: 'short', day: 'numeric', year: 'numeric' })}</text>`; });
+  el.innerHTML = g + '</svg>';
 }
 
 // ---------- bills and income: one editable table, with a blank row for adding ----------
@@ -482,6 +570,35 @@ function settings() {
     </section>`;
 }
 
+// ---------- calendar ----------
+// Month grid of the forecast: what comes in and goes out each day, and the balance that night.
+let calMonth = 0;
+function calendarPanel() {
+  const t = today();
+  const rows = E.simulate(doc, { today: t, days: 400 });
+  const months = [];
+  for (let i = 0; i < 12; i++) { const d = E.D(t.slice(0, 8) + '01'); months.push(E.iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + i, 1))).slice(0, 7)); }
+  calMonth = Math.min(calMonth, months.length - 1);
+  const mk = months[calMonth], first = E.D(mk + '-01');
+  const n = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  const map = new Map(rows.map((r) => [r.s, r]));
+  const line = +doc.settings.cushion || 0;
+  let h = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((x) => `<div class="dow">${x}</div>`).join('');
+  for (let i = 0; i < first.getUTCDay(); i++) h += '<div class="day empty"></div>';
+  for (let d = 1; d <= n; d++) {
+    const s = `${mk}-${String(d).padStart(2, '0')}`, r = map.get(s);
+    if (!r) { h += `<div class="day past ${s === t ? 'is-today' : ''}"><div class="dn">${d}${s === t ? ' · today' : ''}</div></div>`; continue; }
+    const chips = r.ev.map((e) => `<div class="cchip ${e.kind}" title="${esc(e.name)} ${money(e.amount, true)}">${e.amount > 0 ? '+' : '−'}$${Math.abs(Math.round(e.amount)).toLocaleString()} ${esc(e.name)}</div>`).join('');
+    h += `<div class="day ${r.bal < 0 ? 'neg' : r.bal < line ? 'low' : ''} ${s === t ? 'is-today' : ''}"><div class="dn">${d}${s === t ? ' · today' : ''}</div>${chips}<div class="cbal">${money(r.bal)}</div></div>`;
+  }
+  return `<section class="panel">
+      <div class="chart-head"><h2>Calendar</h2></div>
+      <div class="cal-tabs" role="group" aria-label="Month">${months.map((m, i) => `<button type="button" data-act="cal-month" data-i="${i}" aria-pressed="${i === calMonth}">${E.D(m + '-01').toLocaleDateString(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' })}</button>`).join('')}</div>
+      <div class="cal-scroll"><div class="cal">${h}</div></div>
+      <p class="muted small">Each day shows what comes in or goes out and the available balance at the end of the day, including everyday spending from your budget.</p>
+    </section>`;
+}
+
 // ---------- chart ----------
 function drawChart() {
   const el = document.getElementById('chart');
@@ -490,7 +607,7 @@ function drawChart() {
   const t = today();
   const horizon = runwayMode ? 365 : 92;
   const fore = E.simulate(doc, { today: t, days: horizon });
-  const none = runwayMode ? E.simulate(doc, { today: t, days: horizon, noIncomeFrom: tomorrow(), allCash: true }) : [];
+  const none = [];
   const past = doc.checkins.filter((c) => E.daysBetween(c.date, t) <= (runwayMode ? 180 : 92));
   const start = past.length ? past[0].date : t;
   const end = fore.length ? fore[fore.length - 1].s : t;
@@ -498,7 +615,7 @@ function drawChart() {
   const cushion = +doc.settings.cushion || 0;
   const vals = [...past.map((c) => c.balance), ...fore.map((r) => r.bal), ...none.map((r) => r.bal), cushion, 0];
   let lo = Math.min(...vals), hi = Math.max(...vals);
-  lo = Math.max(lo, -Math.max(2000, hi * 0.6));
+  lo = Math.max(lo, -Math.max(2000, hi));
   const pad = (hi - lo) * 0.08 || 500; lo -= pad; hi += pad;
   const W = 1000, H = 260, pl = 64, pr = 14, pt = 12, pb = 28;
   const x = (s) => pl + E.daysBetween(start, s) / span * (W - pl - pr);
@@ -518,17 +635,54 @@ function drawChart() {
   const foreline = [[t, last.date === t ? now : (fore[0]?.bal ?? now)], ...fore.map((r) => [r.s, r.bal])];
   g += `<polygon points="${x(t)},${y(lo)} ${line(foreline)} ${x(end)},${y(lo)}" class="fore-fill"/>`;
   g += `<polyline points="${line(foreline)}" class="fore"/>`;
-  if (none.length) g += `<polyline points="${line([[t, last.balance + E.savingsTotal(doc)], ...none.map((r) => [r.s, r.bal])])}" class="none"/>`;
   if (past.length > 1) g += `<polyline points="${line(past.map((c) => [c.date, c.balance]))}" class="actual"/>`;
   past.forEach((c) => { g += `<circle cx="${x(c.date).toFixed(1)}" cy="${y(c.balance).toFixed(1)}" r="3.5" class="dot"/>`; });
   g += `<line x1="${x(t)}" x2="${x(t)}" y1="${pt}" y2="${H - pb}" class="today"/><text x="${x(t) + 4}" y="${pt + 10}" class="today-t">Today</text>`;
-  el.innerHTML = g + '</svg>';
+  g += `<g class="hover" visibility="hidden"><line class="cursor" y1="${pt}" y2="${H - pb}"/><circle r="4.5" class="hdot h-fore"/><circle r="4.5" class="hdot h-none"/><circle r="4.5" class="hdot h-actual"/></g>`;
+  g += `<rect class="hit" x="${pl}" y="${pt}" width="${W - pl - pr}" height="${H - pt - pb}"/>`;
+  el.innerHTML = g + '</svg><div class="tip" hidden></div>';
+
+  // Hover readout: the date under the cursor and each line's balance that day.
+  const svg = el.querySelector('svg'), tip = el.querySelector('.tip'), hov = svg.querySelector('.hover');
+  const foreMap = new Map(foreline), noneMap = new Map(none.map((r) => [r.s, r.bal]));
+  const evMap = new Map(fore.map((r) => [r.s, r.ev]));
+  const put = (sel, v, s) => { const c = hov.querySelector(sel); if (v == null) c.setAttribute('visibility', 'hidden'); else { c.setAttribute('visibility', 'visible'); c.setAttribute('cx', x(s)); c.setAttribute('cy', y(v)); } };
+  const hide = () => { hov.setAttribute('visibility', 'hidden'); tip.hidden = true; };
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('pointermove', (ev) => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    if (px < pl || px > W - pr) return hide();
+    let s = E.iso(E.addDays(E.D(start), Math.round((px - pl) / (W - pl - pr) * span)));
+    let actual = null;
+    if (s < t) {
+      // Before today only check-ins are known; snap to the nearest one.
+      const c = past.reduce((a, b) => (Math.abs(E.daysBetween(b.date, s)) < Math.abs(E.daysBetween(a.date, s)) ? b : a), past[0]);
+      if (!c) return hide();
+      s = c.date; actual = c.balance;
+    }
+    const f = foreMap.get(s), nn = noneMap.get(s);
+    hov.setAttribute('visibility', 'visible');
+    hov.querySelector('.cursor').setAttribute('x1', x(s)); hov.querySelector('.cursor').setAttribute('x2', x(s));
+    put('.h-fore', actual == null ? f : null, s); put('.h-none', actual == null ? nn : null, s); put('.h-actual', actual, s);
+    const evs = (evMap.get(s) || []);
+    tip.innerHTML = `<b>${dateLabel(s, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</b>`
+      + (actual != null ? `<div><i class="k-actual"></i>Check-in total <span>${money(actual, true)}</span></div>` : '')
+      + (actual == null && f != null ? `<div><i class="k-fore"></i>Available <span class="${f < 0 ? 'bad' : ''}">${money(f, true)}</span></div>` : '')
+      + (actual == null && nn != null ? `<div><i class="k-none"></i>No income <span class="${nn < 0 ? 'bad' : ''}">${money(nn, true)}</span></div>` : '')
+      + evs.slice(0, 4).map((e) => `<div class="tev">${esc(e.name)} <span class="${e.amount > 0 ? 'good' : ''}">${e.amount > 0 ? '+' : ''}${money(e.amount, true)}</span></div>`).join('')
+      + (evs.length > 4 ? `<div class="tev muted">and ${evs.length - 4} more</div>` : '');
+    tip.hidden = false;
+    const cx = x(s) / W * box.width, w = tip.offsetWidth;
+    tip.style.left = `${cx + 14 + w > box.width ? cx - 14 - w : cx + 14}px`;
+    tip.style.top = `${Math.max(0, (ev.clientY - box.top) - tip.offsetHeight / 2)}px`;
+  });
 }
 
 // ---------- events ----------
-function addCheckin(date, balance) {
+function addCheckin(date, balance, by) {
   const last = E.latestCheckin(doc);
-  const entry = { date, balance };
+  const entry = { date, balance, ...(by ? { by } : {}) };
   if (last && date > last.date) {
     const transferred = E.applyContributions(doc, last.date, date);
     if (transferred) entry.transferred = transferred;
@@ -552,17 +706,49 @@ function fixSchedule(it) {
 
 const invalid = (input, msg) => { input.setCustomValidity(msg); input.reportValidity(); };
 
+// Save the balances typed into a check-in form. Spending accounts left blank keep their last
+// balance; investment values go to the portfolio history.
+function saveBalances(form, date) {
+  const vals = {};
+  for (const input of document.querySelectorAll(`[data-acct-value]`)) {
+    if (input.form !== form) continue;
+    if (input.value.trim() === '') continue;
+    const n = num(input.value);
+    if (!isFinite(n)) { invalid(input, 'Enter an amount, like 2450.75'); return false; }
+    vals[input.dataset.acctValue] = n;
+  }
+  const sp = E.spendingAccounts(doc), inv = E.investmentAccounts(doc);
+  const lv = E.latestValues(doc);
+  if (!Object.keys(vals).length) { const first = document.querySelector(`[data-acct-value]`); if (first) invalid(first, 'Enter at least one balance'); return false; }
+  if (sp.some((a) => a.id in vals)) {
+    const by = {};
+    for (const a of sp) { const v = a.id in vals ? vals[a.id] : lv[a.id]?.value; if (v != null) by[a.id] = v; }
+    addCheckin(date, Math.round(Object.values(by).reduce((x, y) => x + y, 0) * 100) / 100, by);
+  }
+  const invVals = Object.fromEntries(inv.filter((a) => a.id in vals).map((a) => [a.id, vals[a.id]]));
+  if (Object.keys(invVals).length) {
+    const existing = doc.portfolio.find((p) => p.date === date);
+    if (existing) Object.assign(existing.values, invVals); else doc.portfolio.push({ date, values: invVals });
+    doc.portfolio.sort((a, b) => (a.date < b.date ? -1 : 1));
+  }
+  return true;
+}
+
 view.addEventListener('submit', (e) => {
   e.preventDefault();
   const f = e.target, data = Object.fromEntries(new FormData(f));
   const kind = f.dataset.form;
   if (kind === 'quick-checkin' || kind === 'checkin') {
-    const bal = num(data.balance);
-    const input = f.querySelector('[name=balance]');
-    if (!isFinite(bal)) return invalid(input, 'Enter an amount, like 2450.75');
     const first = !doc.checkins.length;
-    addCheckin(kind === 'checkin' ? data.date : today(), bal);
-    if (kind === 'checkin' && first) location.hash = '#income';
+    if (!saveBalances(f, kind === 'checkin' ? data.date : today())) return;
+    if (kind === 'checkin' && first && doc.checkins.length) location.hash = '#income';
+    changed();
+  } else if (kind === 'new-acct') {
+    const name = data.name.trim();
+    if (!name) return;
+    const a = { id: uid(), name, kind: data.kind === 'investment' ? 'investment' : 'spending' };
+    doc.accounts.push(a);
+    focusNext = `v-${a.id}`;
     changed();
   } else if (kind === 'new-item') {
     const k = f.dataset.kind, p = k[0];
@@ -606,7 +792,11 @@ function applyEdit(t) {
   const itemRow = t.closest('tr[data-id]');
   const catRow = t.closest('tr[data-cat]');
   const goalEl = t.closest('[data-goal]');
-  if (itemRow) {
+  const acctRow = t.closest('tr[data-acct]');
+  if (acctRow && f) {
+    const a = doc.accounts.find((x) => x.id === acctRow.dataset.acct);
+    if (f === 'name') { if (t.value.trim()) a.name = t.value.trim(); } else if (f === 'kind') a.kind = t.value;
+  } else if (itemRow) {
     const list = itemRow.dataset.kind === 'bill' ? doc.bills : doc.income;
     const it = list.find((x) => x.id === itemRow.dataset.id);
     if (f === 'on') it.on = t.checked;
@@ -665,6 +855,7 @@ view.addEventListener('click', async (e) => {
   if (!b || b.tagName === 'INPUT') return;
   const act = b.dataset.act;
   if (act === 'mode-runway' || act === 'mode-monthly') { doc.settings.mode = act === 'mode-runway' ? 'runway' : 'monthly'; changed(); }
+  else if (act === 'cal-month') { calMonth = +b.dataset.i; render(); }
   else if (act === 'skip-setup') { doc.settings.setupDone = true; changed(); }
   else if (act === 'show-setup') { doc.settings.setupDone = false; changed(); }
   else if (act === 'fill-name') {
@@ -676,6 +867,11 @@ view.addEventListener('click', async (e) => {
   else if (act === 'del') {
     const row = b.closest('tr'); const key = row.dataset.kind === 'bill' ? 'bills' : 'income';
     doc[key] = doc[key].filter((x) => x.id !== row.dataset.id); changed();
+  }
+  else if (act === 'del-acct') {
+    const id = b.closest('tr').dataset.acct, a = doc.accounts.find((x) => x.id === id);
+    if (a.kind !== 'investment' && E.spendingAccounts(doc).length === 1) return alert('Keep at least one spending account. You can rename this one.');
+    if (confirm(`Remove ${a.name}? Past check-ins keep their totals.`)) { doc.accounts = doc.accounts.filter((x) => x !== a); changed(); }
   }
   else if (act === 'del-checkin') { doc.checkins = doc.checkins.filter((c) => c.date !== b.dataset.date); changed(); }
   else if (act === 'add-cat') {
@@ -700,7 +896,8 @@ view.addEventListener('click', async (e) => {
       delete it.offsetDays;
     }
     for (const g of s.goals || []) g.start = E.nextOnDay(g.day || 1, tomorrow());
-    s.checkins = [{ date: today(), balance: s.checkins?.[0]?.balance ?? 4200 }];
+    s.checkins = [{ ...s.checkins[0], date: today() }];
+    for (const p of s.portfolio || []) { p.date = E.iso(E.addDays(t, p.offsetDays || 0)); delete p.offsetDays; }
     doc = normalize(s);
     location.hash = '#dashboard'; changed();
   }
@@ -711,7 +908,7 @@ view.addEventListener('click', async (e) => {
   else if (act === 'erase') {
     if (!confirm('Erase all your Runway data? This can’t be undone. Download a backup first if you might want it.')) return;
     clearTimeout(saveTimer); await saving;
-    if (await store.erase()) { doc = E.emptyDoc(); dirty = false; location.hash = '#dashboard'; render(); status('Erased'); }
+    if (await store.erase()) { doc = normalize(E.emptyDoc()); dirty = false; location.hash = '#dashboard'; render(); status('Erased'); }
   }
 });
 
