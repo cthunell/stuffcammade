@@ -271,7 +271,7 @@ function dashboard() {
   return top(`<div class="mode" role="group" aria-label="View"><button type="button" data-act="mode-monthly" aria-pressed="${!runwayMode}">Monthly</button><button type="button" data-act="mode-runway" aria-pressed="${runwayMode}">Runway</button></div>`) + legacyBanner + setupPanel() + `
     <section class="panel hero">
       <div class="hero-main">${hero}</div>
-      ${checkinMini(since)}
+      ${heroSide(m)}
     </section>
     <section class="kpis">${kpis.map(([l, v, n, cls]) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v ${cls || ''}">${v}</span><span class="n">${n}</span></div>`).join('')}</section>
     <section class="panel chart">
@@ -323,19 +323,42 @@ function spentNote(since) {
 
 const balanceInput = (a, lv, form) => `<input id="v-${a.id}" ${form ? `form="${form}"` : ''} class="money" data-acct-value="${a.id}" inputmode="decimal" placeholder="${lv[a.id] ? esc(money(lv[a.id].value, true)) : '$0.00'}" autocomplete="off" aria-label="${esc(a.name)} balance">`;
 
-function checkinMini(since) {
-  const last = E.latestCheckin(doc);
-  const ago = E.daysBetween(last.date, today());
-  const sp = E.spendingAccounts(doc), lv = E.latestValues(doc);
-  const ask = ago >= 7 ? 'Time for a check-in' : 'Check in';
-  return `<form class="checkin" data-form="quick-checkin">
-      ${sp.length === 1 ? `<label for="v-${sp[0].id}">${ask}: what’s in ${esc(sp[0].name)} today?</label>
-        <div class="row">${balanceInput(sp[0], lv)}<button class="btn" type="submit">Update</button></div>`
-      : `<span class="lbl">${ask}: what’s in your spending accounts today?</span>
-        <div class="acct-rows">${sp.map((a) => `<label class="acct-row"><span>${esc(a.name)}</span>${balanceInput(a, lv)}</label>`).join('')}</div>
-        <div class="row"><button class="btn" type="submit">Update</button><span class="note">Leave any blank to keep its last balance.</span></div>`}
-      <div class="note">Last check-in ${ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago'}. ${vsNote() || spentNote(since)}</div>
-    </form>`;
+// Right side of the dashboard hero: how you're pacing against the forecast, the
+// stretch until the next paycheck, and a nudge toward the check-in page.
+function heroSide(m) {
+  const t = E.trackRecord(doc).slice(-12);
+  let pace;
+  if (t.length) {
+    let run = 0;
+    const pts = [0, ...t.map((r) => (run += r.diff))], total = run;
+    const lo = Math.min(...pts), hi = Math.max(...pts), span = hi - lo || 1, W = 240, H = 48;
+    const xy = pts.map((v, i) => `${(i / (pts.length - 1) * W).toFixed(1)},${(H - 4 - (v - lo) / span * (H - 8)).toFixed(1)}`);
+    const zero = (H - 4 - (0 - lo) / span * (H - 8)).toFixed(1);
+    pace = `<div class="eyebrow">Vs. your forecast</div>
+      <div class="side-v ${total < 0 ? 'bad' : 'good'}">${total >= 0 ? '+' : '−'}${money(Math.abs(total))} <span class="side-u">${total < 0 ? 'behind' : 'ahead'}</span></div>
+      <svg class="spark ${total < 0 ? 'down' : 'up'}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="${W}" y1="${zero}" y2="${zero}"/><polyline points="${xy.join(' ')}"/></svg>
+      <div class="s">Running total over your last ${t.length} check-in${t.length === 1 ? '' : 's'}. <a href="#checkin">See each one</a></div>`;
+  } else {
+    pace = `<div class="eyebrow">Vs. your forecast</div>
+      <div class="s">After your next check-in you’ll see here whether you’re beating the forecast or falling behind it.</div>`;
+  }
+  let pay = '';
+  if (m.payday) {
+    let out = 0;
+    for (let i = 1; i <= m.untilPayday; i++) {
+      const s = E.iso(E.addDays(E.D(today()), i));
+      for (const e of E.eventsOn(doc, s)) if (e.amount < 0 && s < m.payday) out -= e.amount;
+    }
+    pay = `<div class="side-sec"><div class="eyebrow">Next paycheck</div>
+      <div class="side-v">${m.untilPayday === 0 ? 'Today' : `${m.untilPayday} day${m.untilPayday === 1 ? '' : 's'}`} <span class="side-u">${dateLabel(m.payday)}</span></div>
+      <div class="s">${out ? `${money(out)} in bills and savings before then` : 'No bills due before then'}</div></div>`;
+  }
+  const last = E.latestCheckin(doc), ago = E.daysBetween(last.date, today());
+  return `<aside class="hero-side">
+      <div class="side-sec">${pace}</div>
+      ${pay}
+      <a class="side-ci ${ago >= 7 ? 'due' : ''}" href="#checkin">${ago >= 7 ? 'Time for a check-in' : 'Update balances'} <span>Last ${ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago'} →</span></a>
+    </aside>`;
 }
 
 function endingIncome(out) {
@@ -371,7 +394,7 @@ function checkin() {
         <tbody>${group('investment')}</tbody>
       </table></div>
       <div class="form-row ci-save"><label>Date<input id="ciDate" form="ci-form" type="date" name="date" value="${today()}" max="${today()}" required></label><button class="btn" type="submit" form="ci-form">Save check-in</button></div>
-      ${since ? `<p class="callout">From ${dateLabel(since.from)} to ${dateLabel(since.to)}: ${spentNote(since).replace('Between your last two check-ins ', '')} Your everyday budget for those ${since.days} days was ${money(since.budgeted)}.</p>` : ''}
+      ${since ? `<p class="callout">From ${dateLabel(since.from)} to ${dateLabel(since.to)}: ${spentNote(since).replace('Between your last two check-ins ', '')} Your everyday budget for those ${since.days} days was ${money(since.budgeted)}. ${vsNote()}</p>` : ''}
       <form class="form-row add-acct" data-form="new-acct">
         <datalist id="acct-names">${[...ACCOUNTS.spending, ...ACCOUNTS.investment].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
         <label>Add an account<input id="anew-name" name="name" list="acct-names" maxlength="40" placeholder="e.g. Venmo or Roth IRA" required></label>
