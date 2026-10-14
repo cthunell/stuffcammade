@@ -1,0 +1,88 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title,
+  description = 'Projects Cam builds for personal growth and management.',
+} = Astro.props;
+const fullTitle = title ? `${title} · Stuff Cam Made` : 'Stuff Cam Made';
+const path = Astro.url.pathname;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <link rel="canonical" href={new URL(path, Astro.site)} />
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="container">
+        <a class="brand" href="/">Stuff Cam Made</a>
+        <div class="links">
+          <a href="/" aria-current={path === '/' ? 'page' : undefined}>Home</a>
+          <a href="/projects/" aria-current={path.startsWith('/projects') ? 'page' : undefined}>
+            Projects
+          </a>
+        </div>
+      </nav>
+    </header>
+    <main class="container">
+      <slot />
+    </main>
+    <footer class="container muted">
+      <p>© {new Date().getFullYear()} Cam · Built with Astro</p>
+    </footer>
+  </body>
+</html>
+
+<style>
+  .site-header {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2.5rem;
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+  .brand {
+    font-weight: 700;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .links {
+    display: flex;
+    gap: 1.25rem;
+  }
+  .links a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .links a[aria-current='page'],
+  .links a:hover {
+    color: var(--text);
+  }
+  main {
+    min-height: 60vh;
+  }
+  footer {
+    margin-top: 4rem;
+    padding-bottom: 2rem;
+    font-size: 0.9rem;
+  }
+</style>

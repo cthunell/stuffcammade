@@ -1,0 +1,25 @@
+---
+import { getCollection } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import ProjectCard from '../../components/ProjectCard.astro';
+
+const projects = (await getCollection('projects')).sort(
+  (a, b) => b.data.started.valueOf() - a.data.started.valueOf(),
+);
+---
+
+<Base title="Projects" description="Everything Cam is building or has built.">
+  <h1>Projects</h1>
+  <p class="muted">Everything I'm building or have built, newest first.</p>
+  <div class="grid">
+    {projects.map((project) => <ProjectCard project={project} />)}
+  </div>
+</Base>
+
+<style>
+  .grid {
+    display: grid;
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+</style>
