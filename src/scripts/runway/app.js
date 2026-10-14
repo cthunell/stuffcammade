@@ -271,6 +271,7 @@ function dashboard() {
         <div class="legend">${doc.checkins.length > 1 ? '<span><i class="k-actual"></i>Your check-ins</span>' : ''}<span><i class="k-fore"></i>Forecast</span>${runwayMode ? '<span><i class="k-none"></i>No income from tomorrow</span>' : ''}${cushion ? `<span><i class="k-cush"></i>Cushion ${money(cushion)}</span>` : ''}</div></div>
       <div id="chart"></div>
     </section>
+    ${calendarPanel()}
     <div class="two">${bottom}</div>
     ${goalsPanel}`;
 }
@@ -482,6 +483,38 @@ function settings() {
     </section>`;
 }
 
+// ---------- calendar ----------
+// Month grid of the forecast: what comes in and goes out each day, and the balance that night.
+let calMonth = 0, calNoIncome = null;
+function calendarPanel() {
+  const runwayMode = doc.settings.mode === 'runway';
+  const noIncome = runwayMode && calNoIncome !== false;
+  const t = today();
+  const rows = E.simulate(doc, noIncome ? { today: t, days: 400, noIncomeFrom: tomorrow(), allCash: true } : { today: t, days: 400 });
+  const months = [];
+  for (let i = 0; i < 12; i++) { const d = E.D(t.slice(0, 8) + '01'); months.push(E.iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + i, 1))).slice(0, 7)); }
+  calMonth = Math.min(calMonth, months.length - 1);
+  const mk = months[calMonth], first = E.D(mk + '-01');
+  const n = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  const map = new Map(rows.map((r) => [r.s, r]));
+  const line = +doc.settings.cushion || 0;
+  let h = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((x) => `<div class="dow">${x}</div>`).join('');
+  for (let i = 0; i < first.getUTCDay(); i++) h += '<div class="day empty"></div>';
+  for (let d = 1; d <= n; d++) {
+    const s = `${mk}-${String(d).padStart(2, '0')}`, r = map.get(s);
+    if (!r) { h += `<div class="day past ${s === t ? 'is-today' : ''}"><div class="dn">${d}${s === t ? ' · today' : ''}</div></div>`; continue; }
+    const chips = r.ev.map((e) => `<div class="cchip ${e.kind}" title="${esc(e.name)} ${money(e.amount, true)}">${e.amount > 0 ? '+' : '−'}$${Math.abs(Math.round(e.amount)).toLocaleString()} ${esc(e.name)}</div>`).join('');
+    h += `<div class="day ${r.bal < 0 ? 'neg' : r.bal < line ? 'low' : ''} ${s === t ? 'is-today' : ''}"><div class="dn">${d}${s === t ? ' · today' : ''}</div>${chips}<div class="cbal">${money(r.bal)}</div></div>`;
+  }
+  return `<section class="panel">
+      <div class="chart-head"><h2>Calendar</h2>
+        ${runwayMode ? `<div class="seg" role="group" aria-label="Scenario"><button type="button" data-act="cal-scen" data-v="1" aria-pressed="${noIncome}">No income from tomorrow</button><button type="button" data-act="cal-scen" data-v="0" aria-pressed="${!noIncome}">With income</button></div>` : ''}</div>
+      <div class="cal-tabs" role="group" aria-label="Month">${months.map((m, i) => `<button type="button" data-act="cal-month" data-i="${i}" aria-pressed="${i === calMonth}">${E.D(m + '-01').toLocaleDateString(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' })}</button>`).join('')}</div>
+      <div class="cal-scroll"><div class="cal">${h}</div></div>
+      <p class="muted small">Each day shows what comes in or goes out and the ${runwayMode ? 'cash' : 'available balance'} at the end of the day, including everyday spending from your budget.</p>
+    </section>`;
+}
+
 // ---------- chart ----------
 function drawChart() {
   const el = document.getElementById('chart');
@@ -498,7 +531,7 @@ function drawChart() {
   const cushion = +doc.settings.cushion || 0;
   const vals = [...past.map((c) => c.balance), ...fore.map((r) => r.bal), ...none.map((r) => r.bal), cushion, 0];
   let lo = Math.min(...vals), hi = Math.max(...vals);
-  lo = Math.max(lo, -Math.max(2000, hi * 0.6));
+  lo = Math.max(lo, -Math.max(2000, hi));
   const pad = (hi - lo) * 0.08 || 500; lo -= pad; hi += pad;
   const W = 1000, H = 260, pl = 64, pr = 14, pt = 12, pb = 28;
   const x = (s) => pl + E.daysBetween(start, s) / span * (W - pl - pr);
@@ -522,7 +555,45 @@ function drawChart() {
   if (past.length > 1) g += `<polyline points="${line(past.map((c) => [c.date, c.balance]))}" class="actual"/>`;
   past.forEach((c) => { g += `<circle cx="${x(c.date).toFixed(1)}" cy="${y(c.balance).toFixed(1)}" r="3.5" class="dot"/>`; });
   g += `<line x1="${x(t)}" x2="${x(t)}" y1="${pt}" y2="${H - pb}" class="today"/><text x="${x(t) + 4}" y="${pt + 10}" class="today-t">Today</text>`;
-  el.innerHTML = g + '</svg>';
+  g += `<g class="hover" visibility="hidden"><line class="cursor" y1="${pt}" y2="${H - pb}"/><circle r="4.5" class="hdot h-fore"/><circle r="4.5" class="hdot h-none"/><circle r="4.5" class="hdot h-actual"/></g>`;
+  g += `<rect class="hit" x="${pl}" y="${pt}" width="${W - pl - pr}" height="${H - pt - pb}"/>`;
+  el.innerHTML = g + '</svg><div class="tip" hidden></div>';
+
+  // Hover readout: the date under the cursor and each line's balance that day.
+  const svg = el.querySelector('svg'), tip = el.querySelector('.tip'), hov = svg.querySelector('.hover');
+  const foreMap = new Map(foreline), noneMap = new Map(none.map((r) => [r.s, r.bal]));
+  const evMap = new Map(fore.map((r) => [r.s, r.ev]));
+  const put = (sel, v, s) => { const c = hov.querySelector(sel); if (v == null) c.setAttribute('visibility', 'hidden'); else { c.setAttribute('visibility', 'visible'); c.setAttribute('cx', x(s)); c.setAttribute('cy', y(v)); } };
+  const hide = () => { hov.setAttribute('visibility', 'hidden'); tip.hidden = true; };
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('pointermove', (ev) => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    if (px < pl || px > W - pr) return hide();
+    let s = E.iso(E.addDays(E.D(start), Math.round((px - pl) / (W - pl - pr) * span)));
+    let actual = null;
+    if (s < t) {
+      // Before today only check-ins are known; snap to the nearest one.
+      const c = past.reduce((a, b) => (Math.abs(E.daysBetween(b.date, s)) < Math.abs(E.daysBetween(a.date, s)) ? b : a), past[0]);
+      if (!c) return hide();
+      s = c.date; actual = c.balance;
+    }
+    const f = foreMap.get(s), nn = s === t ? (none.length ? last.balance + E.savingsTotal(doc) : undefined) : noneMap.get(s);
+    hov.setAttribute('visibility', 'visible');
+    hov.querySelector('.cursor').setAttribute('x1', x(s)); hov.querySelector('.cursor').setAttribute('x2', x(s));
+    put('.h-fore', actual == null ? f : null, s); put('.h-none', actual == null ? nn : null, s); put('.h-actual', actual, s);
+    const evs = (evMap.get(s) || []);
+    tip.innerHTML = `<b>${dateLabel(s, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</b>`
+      + (actual != null ? `<div><i class="k-actual"></i>Check-in <span>${money(actual, true)}</span></div>` : '')
+      + (actual == null && f != null ? `<div><i class="k-fore"></i>${runwayMode ? 'Forecast' : 'Available'} <span class="${f < 0 ? 'bad' : ''}">${money(f, true)}</span></div>` : '')
+      + (actual == null && nn != null ? `<div><i class="k-none"></i>No income <span class="${nn < 0 ? 'bad' : ''}">${money(nn, true)}</span></div>` : '')
+      + evs.slice(0, 4).map((e) => `<div class="tev">${esc(e.name)} <span class="${e.amount > 0 ? 'good' : ''}">${e.amount > 0 ? '+' : ''}${money(e.amount, true)}</span></div>`).join('')
+      + (evs.length > 4 ? `<div class="tev muted">and ${evs.length - 4} more</div>` : '');
+    tip.hidden = false;
+    const cx = x(s) / W * box.width, w = tip.offsetWidth;
+    tip.style.left = `${cx + 14 + w > box.width ? cx - 14 - w : cx + 14}px`;
+    tip.style.top = `${Math.max(0, (ev.clientY - box.top) - tip.offsetHeight / 2)}px`;
+  });
 }
 
 // ---------- events ----------
@@ -665,6 +736,8 @@ view.addEventListener('click', async (e) => {
   if (!b || b.tagName === 'INPUT') return;
   const act = b.dataset.act;
   if (act === 'mode-runway' || act === 'mode-monthly') { doc.settings.mode = act === 'mode-runway' ? 'runway' : 'monthly'; changed(); }
+  else if (act === 'cal-month') { calMonth = +b.dataset.i; render(); }
+  else if (act === 'cal-scen') { calNoIncome = b.dataset.v === '1'; render(); }
   else if (act === 'skip-setup') { doc.settings.setupDone = true; changed(); }
   else if (act === 'show-setup') { doc.settings.setupDone = false; changed(); }
   else if (act === 'fill-name') {
