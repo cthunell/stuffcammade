@@ -16,5 +16,11 @@ Everything is adjustable: toggle a bill off to see what cutting it buys, change
 the budget by category, or compare different income scenarios. Edits save
 automatically, so it always opens where I left off.
 
-The tool itself is private and needs my Google sign-in, since it runs on my real
-numbers.
+My copy is private and needs my Google sign-in, since it runs on my real numbers.
+
+## Use it yourself
+
+[Try the template](/runway-template) with made-up sample numbers. Your changes stay
+in your own browser and are never sent anywhere. To plug in your own numbers,
+[download the template file](/runway-template.json), replace the values, and load it
+with "Import data file" at the bottom of the template page.

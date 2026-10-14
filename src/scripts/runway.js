@@ -1,12 +1,41 @@
-// Cash runway forecast. All personal data comes from /api/runway (signed-in only);
-// edits auto-save back there so they stick across reloads and devices.
+// Cash runway forecast. In "private" mode all personal data comes from /api/runway
+// (signed-in only) and edits auto-save back there. In "template" mode it runs on the
+// public sample data and saves only in this browser's localStorage.
 
 const $ = (id) => document.getElementById(id);
 const INPUTS = ['startBal', 'cash', 'sevEnd', 'payAmt', 'ui', 'venmoBal'];
+const MODE = $('runway').dataset.mode;
+
+// ---------- storage ----------
+// Same request shape for both modes, so the rest of the page doesn't care where data lives.
+const LOCAL = { data: 'runway-template:data', state: 'runway-template:state' };
+const local = {
+  get: (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
+  del: (k) => { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } },
+};
+const reply = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+async function api(opts = {}) {
+  if (MODE !== 'template') return fetch('/api/runway', { cache: 'no-store', ...opts });
+  const method = opts.method || 'GET';
+  const body = opts.body ? JSON.parse(opts.body) : null;
+  if (method === 'GET') {
+    const data = local.get(LOCAL.data) ?? await (await fetch('/runway-template.json')).json();
+    return reply({ data, state: local.get(LOCAL.state) });
+  }
+  if (method === 'PUT') return local.set(LOCAL.state, { ...body, savedAt: new Date().toISOString() }) ? reply({ ok: true }) : reply({ error: 'storage unavailable' }, 500);
+  if (method === 'DELETE') { local.del(LOCAL.state); return reply({ ok: true }); }
+  if (method === 'POST') {
+    if (!body || !Array.isArray(body.items) || !Array.isArray(body.budget) || !body.settings) return reply({ error: 'That file is not runway forecast data.' }, 400);
+    local.del(LOCAL.state);
+    return local.set(LOCAL.data, body) ? reply({ ok: true }) : reply({ error: 'storage unavailable' }, 500);
+  }
+}
 
 // ---------- data (filled from the store) ----------
 // rule: {m:day} monthly | {months:[1-12], d:day} | {dates:[iso]} ; amts = optional per-month (index 0=Jan) amounts
-let DATA, ITEMS, ONE_TIME, CAVEATS, BUDGET, SETTINGS, START, DAYS, TODAY, HOLIDAY_SHIFT;
+let DATA, ITEMS, ONE_TIME, CAVEATS, BUDGET, SETTINGS, START, DAYS, TODAY, HOLIDAY_SHIFT, FIRST_PAY;
 // Budget rows: [id, label, lean, typical, austere, what it covers, history override]
 const budget = {};
 const state = { on: {}, month: 0 };
@@ -37,13 +66,20 @@ function charges(item, d) {
 }
 
 function payDates(sevEnd) {
-  const out = []; let d = D(SETTINGS.firstPay); const end = D(sevEnd);
+  const out = []; let d = D(FIRST_PAY); const end = D(sevEnd);
   while (d <= addDays(START, DAYS)) {
     let s = iso(d); if (HOLIDAY_SHIFT[s]) s = HOLIDAY_SHIFT[s];
     if (D(s) <= end) out.push(s);
     d = addDays(d, SETTINGS.payEveryDays || 14);
   }
   return out;
+}
+
+// A last-paycheck setting can be a date, or a number of paychecks left (0 = none),
+// which keeps the template's scenarios meaningful whenever it is opened.
+function payDate(v) {
+  if (typeof v !== 'number') return v;
+  return v <= 0 ? iso(addDays(START, -1)) : iso(addDays(D(FIRST_PAY), (v - 1) * (SETTINGS.payEveryDays || 14)));
 }
 
 function simulate(opt) {
@@ -133,7 +169,7 @@ function drawChart(days, lastPay) {
 }
 
 function drawScenarios(o) {
-  const rows = (SETTINGS.scenarios || []).map((r) => [...r]);
+  const rows = (SETTINGS.scenarios || []).map(([lbl, end]) => [lbl, payDate(end)]);
   rows.push(['Your setting (' + o.sevEnd + ')', o.sevEnd]);
   let h = '<tr><th>If severance pays…</th><th class="num">Last check</th><th class="num">First dip below $0</th><th class="num">Balance after last check</th><th class="num">Lowest in 90 days</th></tr>';
   rows.forEach(([lbl, end]) => {
@@ -218,7 +254,7 @@ function save() {
     const body = JSON.stringify(snapshot());
     saving = saving.then(async () => {
       try {
-        const res = await fetch('/api/runway', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
+        const res = await api({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
         if (res.status === 401) return status('Signed out. Reload to sign in; this change was not saved.');
         if (!res.ok) throw new Error(String(res.status));
         status('Saved ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
@@ -233,21 +269,28 @@ function save() {
 addEventListener('pagehide', () => {
   if (!saveTimer || !DATA) return;
   clearTimeout(saveTimer);
-  fetch('/api/runway', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive: true });
+  api({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive: true });
 });
 
 // ---------- load ----------
 function applyData(data, saved) {
   DATA = data;
   ({ items: ITEMS, oneTime: ONE_TIME = [], caveats: CAVEATS = [], budget: BUDGET, settings: SETTINGS } = data);
-  START = D(SETTINGS.start); DAYS = SETTINGS.days || 365; TODAY = SETTINGS.today; HOLIDAY_SHIFT = SETTINGS.holidayShift || {};
+  // "today" (used by the template) starts the forecast on the current date.
+  const now = new Date();
+  START = SETTINGS.start === 'today' ? new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) : D(SETTINGS.start);
+  TODAY = SETTINGS.today || iso(addDays(START, -1));
+  DAYS = SETTINGS.days || 365; HOLIDAY_SHIFT = SETTINGS.holidayShift || {};
+  let first = D(SETTINGS.firstPay || iso(START));
+  while (first < START) first = addDays(first, SETTINGS.payEveryDays || 14);
+  FIRST_PAY = iso(first);
 
   $('title').textContent = data.title || 'Cash Runway Forecast';
   $('subtitle').textContent = data.subtitle || '';
   $('controlNote').textContent = data.controlNote || '';
   document.querySelectorAll('[data-label]').forEach((el) => { el.textContent = data.labels?.[el.dataset.label] ?? el.dataset.label; });
 
-  const inputs = { ...data.defaults, ...saved?.inputs };
+  const inputs = { ...data.defaults, sevEnd: payDate(data.defaults?.sevEnd), ...saved?.inputs };
   INPUTS.forEach((id) => { $(id).value = inputs[id] ?? ''; });
 
   Object.keys(state.on).forEach((k) => delete state.on[k]);
@@ -271,7 +314,7 @@ function applyData(data, saved) {
 
 async function load() {
   status('Loading…');
-  const res = await fetch('/api/runway', { cache: 'no-store' });
+  const res = await api();
   if (res.status === 401) { location.href = '/api/auth/signin?callbackUrl=%2Frunway'; return; }
   if (!res.ok) { status('Could not load the forecast. Try reloading.'); return; }
   const { data, state: saved } = await res.json();
@@ -290,7 +333,7 @@ $('resetBtn').onclick = async () => {
   if (!DATA || !confirm('Reset every number, checkbox and budget category back to the original forecast?')) return;
   clearTimeout(saveTimer);
   await saving;
-  const res = await fetch('/api/runway', { method: 'DELETE' });
+  const res = await api({ method: 'DELETE' });
   if (!res.ok) return status('Reset failed. Try again.');
   applyData(DATA, null);
   status('Reset to original');
@@ -315,10 +358,10 @@ $('importFile').onchange = async (e) => {
   const { savedEdits, ...data } = parsed;
   clearTimeout(saveTimer);
   await saving;
-  const res = await fetch('/api/runway', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  const res = await api({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   if (!res.ok) { const msg = (await res.json().catch(() => ({}))).error; return status(msg || 'Import failed.'); }
   // A backup file carries its edits; restore them too.
-  if (savedEdits) await fetch('/api/runway', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(savedEdits) });
+  if (savedEdits) await api({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(savedEdits) });
   applyData(data, savedEdits || null);
   status('Imported');
 };
