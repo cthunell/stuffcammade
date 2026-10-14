@@ -48,9 +48,27 @@ src/
   layouts/Base.astro       shared page shell, header and footer
   components/              reusable pieces such as ProjectCard
   pages/                   routes: home, projects index, project page
+  pages/runway.astro       private cash runway forecast (sign-in required)
+  pages/api/               sign-in routes and the runway data API
+  lib/                     sign-in config and the private data store
+  scripts/runway.js        the runway forecast's in-browser logic
   styles/global.css        colors, type, light and dark themes
 public/                    files served as-is (favicon, images)
 ```
+
+## Private pages
+
+`/runway` is locked behind Google sign-in, and only the account in `ALLOWED_EMAIL`
+gets in. It uses [Auth.js](https://authjs.dev) for sign-in and Upstash Redis for
+storage. Its numbers are never in this repo: they live in Redis, are loaded once
+with the page's "Import data file" button, and every edit on the page auto-saves
+back there. "Download backup" on the page saves a copy of the data and edits.
+
+Everything else on the site is still prerendered as static pages; only `/runway`
+and `/api/*` run as Vercel functions. The settings it needs are listed in
+`.env.example`; set them in Vercel, or in a local `.env` to run it with
+`npm run dev` (add `http://localhost:4321/api/auth/callback/google` as a redirect
+URI on the Google OAuth client).
 
 ## Deploying
 

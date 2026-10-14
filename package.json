@@ -10,6 +10,9 @@
     "check": "astro check"
   },
   "dependencies": {
+    "@astrojs/vercel": "^11.0.14",
+    "@auth/core": "^0.41.3",
+    "@upstash/redis": "^1.39.0",
     "astro": "^7.3.8"
   }
 }
