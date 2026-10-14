@@ -32,9 +32,6 @@ const path = Astro.url.pathname;
         <a class="brand" href="/">Stuff Cam Made</a>
         <div class="links">
           <a href="/" aria-current={path === '/' ? 'page' : undefined}>Home</a>
-          <a href="/projects/" aria-current={path.startsWith('/projects') ? 'page' : undefined}>
-            Projects
-          </a>
         </div>
       </nav>
     </header>
