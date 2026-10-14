@@ -105,6 +105,13 @@ function render() {
   try { if (!focusNext) caret = [document.activeElement.selectionStart, document.activeElement.selectionEnd]; } catch { /* not a text field */ }
   focusNext = null;
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === v));
+  const grp = $('#planGroup');
+  if (grp && grp.querySelector('a.on')) grp.open = true;
+  else if (grp && !grp.dataset.ready) { try { if (localStorage.getItem('runway:planOpen') === '0') grp.open = false; } catch { /* storage blocked */ } }
+  if (grp && !grp.dataset.ready) {
+    grp.dataset.ready = '1';
+    grp.addEventListener('toggle', () => { try { localStorage.setItem('runway:planOpen', grp.open ? '1' : '0'); } catch { /* storage blocked */ } });
+  }
   const due = $('[data-nav="checkin"] .due');
   const last = E.latestCheckin(doc);
   if (due) due.hidden = !!last && E.daysBetween(last.date, today()) < 7;

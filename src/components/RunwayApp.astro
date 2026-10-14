@@ -9,10 +9,15 @@ const { mode } = Astro.props;
 const nav = [
   ['dashboard', 'Dashboard'],
   ['checkin', 'Check-in'],
+];
+// The inputs behind the forecast, grouped so the sidebar stays short.
+const plan = [
   ['bills', 'Bills'],
   ['income', 'Income'],
   ['budget', 'Budget'],
   ['goals', 'Savings & goals'],
+];
+const after = [
   ['investments', 'Investments'],
   ['settings', 'Settings'],
 ];
@@ -26,6 +31,11 @@ const nav = [
     {nav.map(([id, label]) => (
       <a data-nav={id} href={`#${id}`}>{label}{id === 'checkin' && <span class="due" hidden>due</span>}</a>
     ))}
+    <details class="grp" id="planGroup" open>
+      <summary>Plan</summary>
+      <div class="grp-items">{plan.map(([id, label]) => <a data-nav={id} href={`#${id}`}>{label}</a>)}</div>
+    </details>
+    {after.map(([id, label]) => <a data-nav={id} href={`#${id}`}>{label}</a>)}
     <div class="foot">
       <span id="saveStatus" aria-live="polite"></span>
       {mode === 'private'
@@ -75,6 +85,13 @@ nav.side{background:var(--nav);color:var(--nav-ink);padding:22px 14px;display:fl
 .side .brand small{display:block;font:500 11px var(--f-body);color:var(--nav-ink);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
 .side a[data-nav]{color:var(--nav-ink);text-decoration:none;padding:9px 10px;border-radius:8px;font-weight:500;display:flex;justify-content:space-between;align-items:center}
 .side a[data-nav]:hover{background:rgba(255,255,255,.06)}
+.side .grp summary{font:inherit;font-weight:500;color:var(--nav-ink);padding:9px 10px;border-radius:8px;font-weight:500;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center}
+.side .grp summary::-webkit-details-marker{display:none}
+.side .grp summary::after{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);margin-right:4px;transition:transform .15s}
+.side .grp[open] summary::after{transform:rotate(45deg)}
+.side .grp summary:hover{background:rgba(255,255,255,.06)}
+.side .grp:not([open]):has(a.on) summary{color:var(--nav-active)}
+.side .grp a[data-nav]{padding-left:22px}
 .side a.on{background:rgba(255,255,255,.1);color:var(--nav-active)}
 .side .due{font:500 11px var(--f-data);background:var(--warn);color:#1b1400;border-radius:99px;padding:1px 7px}
 .side .foot{margin-top:auto;font-size:12px;padding:10px;line-height:1.45;display:flex;flex-direction:column;gap:8px}
@@ -296,6 +313,10 @@ details summary{cursor:pointer;color:var(--accent);font-size:13px;font-weight:60
   .app{grid-template-columns:minmax(0,1fr)}
   nav.side{flex-direction:row;flex-wrap:wrap;padding:12px max(16px, env(safe-area-inset-left,0px));gap:2px;position:static;height:auto}
   .side .brand{padding:6px 10px;width:100%}
+  .side .grp{width:100%}
+  .side .grp summary{display:inline-flex;gap:8px}
+  .side .grp-items{display:flex;flex-wrap:wrap;gap:2px}
+  .side .grp a[data-nav]{padding-left:10px}
   .side .foot{margin-top:0;width:100%;flex-direction:row;flex-wrap:wrap;gap:12px}
   main{padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px))}
   .goals{grid-template-columns:minmax(0,1fr)}
