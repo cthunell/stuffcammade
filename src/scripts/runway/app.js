@@ -220,8 +220,8 @@ function dashboard() {
   const hero = runwayMode ? `
       <div class="eyebrow">With your income and bills as scheduled</div>
       ${r.out ? `<div class="big">Money lasts until <span class="${r.days < 90 ? 'bad' : 'good'}">${dateLabel(r.out, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
-      <p>About <b>${r.months < 1 ? r.days + ' days' : r.months.toFixed(1) + ' months'}</b> on ${money(r.cash)} available${setAside ? ` (not counting ${money(setAside)} set aside for goals)` : ''}, spending ${money(r.burn)} a month on bills and everyday costs${cushion ? `, keeping ${money(cushion)} as a cushion` : ''}. ${endingIncome(r.out)}</p>`
-    : `<div class="big">Your money lasts <span class="good">2+ years</span></div><p>With your income as scheduled, your available balance stays above ${money(cushion)} for at least two years.</p>`}` : `
+      <p>About <b>${r.months < 1 ? r.days + ' days' : r.months.toFixed(1) + ' months'}</b> on ${money(r.cash)} available${setAside ? ` (not counting ${money(setAside)} set aside for goals)` : ''}, spending ${money(r.burn)} a month on bills and everyday costs${cushion ? `, keeping ${money(cushion)} as a cushion` : ''}. ${endingIncome(r.out)}</p>${dipNote(r.dips, cushion)}`
+    : `<div class="big">Your money lasts <span class="good">2+ years</span></div><p>With your income as scheduled, your available balance stays above ${money(cushion)} for at least two years.</p>${dipNote(r.dips, cushion)}`}` : `
       <div class="eyebrow">Aim to spend under</div>
       ${m.perDay > 0 ? `<div class="big"><span class="good">${money(m.perDay)}</span> a day</div>
       <p>On average, for everyday spending. That keeps you above ${money(cushion)} through the end of next month, after bills${saving ? ', savings' : ''} and income.${m.payday ? ` Until your next paycheck on ${dateLabel(m.payday)}, that’s about <b>${money(m.perDay * m.untilPayday)}</b>.` : ''}</p>`
@@ -283,6 +283,7 @@ function dashboard() {
     <section class="kpis">${kpis.map(([l, v, n, cls]) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v ${cls || ''}">${v}</span><span class="n">${n}</span></div>`).join('')}</section>
     <section class="panel chart">
       <div class="chart-head"><h2>Balance: ${doc.checkins.length > 1 ? 'actual and ' : ''}forecast</h2>
+        <div class="range" role="group" aria-label="Chart range">${RANGES.map((n) => `<button type="button" data-act="range-${n}" aria-pressed="${chartRange() === n}">${n}d</button>`).join('')}</div>
         <div class="legend">${doc.checkins.length > 1 ? '<span><i class="k-actual"></i>Your check-ins</span>' : ''}<span><i class="k-fore"></i>Available forecast${setAside ? ` (leaves out ${money(setAside)} set aside)` : ''}</span>${cushion ? `<span><i class="k-cush"></i>Cushion ${money(cushion)}</span>` : ''}</div></div>
       <div id="chart"></div>
     </section>
@@ -366,6 +367,16 @@ function heroSide(m) {
       ${pay}
       <a class="side-ci ${ago >= 7 ? 'due' : ''}" href="#checkin">${ago >= 7 ? 'Time for a check-in' : 'Update balances'} <span>Last ${ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago'} →</span></a>
     </aside>`;
+}
+
+// Short dips below the cushion that recover on the next paycheck: they don't end the runway,
+// but they'd overdraw (or eat into the cushion), so call out the first one.
+function dipNote(list, cushion) {
+  if (!list || !list.length) return '';
+  const d = list[0], short = cushion - d.low;
+  const n = list.length - 1;
+  const more = n === 1 ? ' One more dip like this comes later.' : n > 1 ? ` ${n} more dips like this come later.` : '';
+  return `<p class="callout warn">Heads up: you’d be about <b>${money(short)}</b> ${cushion ? `under your ${money(cushion)} cushion` : 'short'} around ${dateLabel(d.lowOn)}, until money comes in on ${dateLabel(d.to)}.${more}</p>`;
 }
 
 function endingIncome(out) {
@@ -668,15 +679,17 @@ function calendarPanel() {
 }
 
 // ---------- chart ----------
+const RANGES = [30, 90, 180];
+const chartRange = () => (RANGES.includes(+doc.settings.range) ? +doc.settings.range : 90);
+
 function drawChart() {
   const el = document.getElementById('chart');
   if (!el) return;
-  const runwayMode = doc.settings.mode === 'runway';
   const t = today();
-  const horizon = runwayMode ? 365 : 92;
+  const horizon = chartRange();
   const fore = E.simulate(doc, { today: t, days: horizon });
   const none = [];
-  const past = doc.checkins.filter((c) => E.daysBetween(c.date, t) <= (runwayMode ? 180 : 92));
+  const past = doc.checkins.filter((c) => E.daysBetween(c.date, t) <= Math.max(30, horizon / 2));
   const start = past.length ? past[0].date : t;
   const end = fore.length ? fore[fore.length - 1].s : t;
   const span = Math.max(1, E.daysBetween(start, end));
@@ -693,9 +706,17 @@ function drawChart() {
   for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * i / 4; g += `<line x1="${pl}" x2="${W - pr}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid"/><text x="${pl - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${money(v)}</text>`; }
   g += `<line x1="${pl}" x2="${W - pr}" y1="${y(0)}" y2="${y(0)}" class="zero"/>`;
   if (cushion) g += `<line x1="${pl}" x2="${W - pr}" y1="${y(cushion)}" y2="${y(cushion)}" class="cush"/>`;
-  for (let d = E.D(start.slice(0, 8) + '01'); E.iso(d) <= end; d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) {
-    const s = E.iso(d); if (s < start) continue;
-    g += `<text x="${x(s).toFixed(1)}" y="${H - 8}" text-anchor="middle">${dateLabel(s, { month: 'short' })}</text>`;
+  if (span <= 75) {
+    // Short ranges: a label every week, starting from today.
+    for (let d = E.D(t); E.iso(d) <= end; d = E.addDays(d, 7)) {
+      const s = E.iso(d);
+      g += `<text x="${x(s).toFixed(1)}" y="${H - 8}" text-anchor="middle">${dateLabel(s)}</text>`;
+    }
+  } else {
+    for (let d = E.D(start.slice(0, 8) + '01'); E.iso(d) <= end; d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) {
+      const s = E.iso(d); if (s < start) continue;
+      g += `<text x="${x(s).toFixed(1)}" y="${H - 8}" text-anchor="middle">${dateLabel(s, { month: 'short' })}</text>`;
+    }
   }
   // Past check-ins show the checking balance; the forecast shows what's available to spend.
   const now = E.available(doc);
@@ -933,6 +954,7 @@ view.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-act]');
   if (!b || b.tagName === 'INPUT') return;
   const act = b.dataset.act;
+  if (act && act.startsWith('range-')) { doc.settings.range = +act.slice(6); changed(); }
   if (act === 'mode-runway' || act === 'mode-monthly') { doc.settings.mode = act === 'mode-runway' ? 'runway' : 'monthly'; changed(); }
   else if (act === 'cal-month') { calMonth = +b.dataset.i; render(); }
   else if (act === 'skip-setup') { doc.settings.setupDone = true; changed(); }

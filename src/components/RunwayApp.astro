@@ -230,6 +230,10 @@ label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600}
 .linkbtn{font:inherit;background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer}
 .form-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px}
 .callout{margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--bg)}
+.callout.warn{background:var(--bad-soft)}
+.range{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.range button{font:500 12px var(--f-body);padding:4px 10px;border:0;background:transparent;color:var(--muted);cursor:pointer}
+.range button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
 .bar-actions{display:flex;gap:10px}
 .tbl{width:100%;border-collapse:collapse;font-size:14px}
 .tbl th{text-align:left;font:500 11px var(--f-body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:8px 8px;border-bottom:1px solid var(--line)}
