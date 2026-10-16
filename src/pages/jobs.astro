@@ -1,0 +1,28 @@
+---
+// Private job pipeline. Signed-in owner only; all data loads from the private store.
+import { getSession } from '../lib/auth';
+import { privateHeaders } from '../lib/private-response';
+import JobsApp from '../components/JobsApp.astro';
+
+export const prerender = false;
+
+const session = await getSession(Astro.request);
+if (!session) {
+  return Astro.redirect('/api/auth/signin?callbackUrl=' + encodeURIComponent('/jobs'));
+}
+for (const [k, v] of Object.entries(privateHeaders)) Astro.response.headers.set(k, v);
+
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Job Pipeline</title>
+</head>
+<body>
+<JobsApp />
+</body>
+</html>
