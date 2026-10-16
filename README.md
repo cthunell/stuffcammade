@@ -49,9 +49,11 @@ src/
   components/              reusable pieces such as ProjectCard
   pages/                   routes: home, projects index, project page
   pages/runway.astro       private cash runway forecast (sign-in required)
+  pages/jobs.astro         private job pipeline board and table (sign-in required)
   pages/api/               sign-in routes and the runway data API
   lib/                     sign-in config and the private data store
   scripts/runway.js        the runway forecast's in-browser logic
+  scripts/jobs/app.js      the job pipeline's in-browser logic
   styles/global.css        colors, type, light and dark themes
 public/                    files served as-is (favicon, images)
 ```
@@ -69,6 +71,19 @@ and `/api/*` run as Vercel functions. The settings it needs are listed in
 `.env.example`; set them in Vercel, or in a local `.env` to run it with
 `npm run dev` (add `http://localhost:4321/api/auth/callback/google` as a redirect
 URI on the Google OAuth client).
+
+## Job pipeline
+
+`/jobs` is a private board and table for tracking job applications, behind the same Google
+sign-in as `/runway`. The data is never in this repo: it is one document per account in Redis
+(`jobs:v1:<email>`), saved automatically through `/api/jobs`. Use "Import data" on the page to
+load a backup and "Download backup" to save one. Each save carries a revision number, so a stale
+tab or device gets the newest copy back (409) instead of overwriting it.
+
+To change it from a script or from Claude, set `JOBS_API_TOKEN` in Vercel to a long random
+string (32+ characters) and send `Authorization: Bearer <token>` to `GET` or `PUT /api/jobs`.
+Without that variable only the browser sign-in works. Read, change `jobs`, and `PUT` the whole
+document back with the `rev` you read as `baseRev`.
 
 ## Deploying
 
