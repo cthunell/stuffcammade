@@ -163,6 +163,28 @@ export function firstBelow(rows, line = 0) {
   return r ? r.s : null;
 }
 
+// When money runs out for good: the first day of the last stretch below the line, so a
+// short dip before a paycheck doesn't count as running out. Null if it never stays below.
+export function runsOut(rows, line = 0) {
+  let i = rows.length;
+  while (i > 0 && rows[i - 1].bal < line) i--;
+  return i < rows.length ? rows[i].s : null;
+}
+
+// Short dips below the line that recover before money runs out for good.
+export function dips(rows, line = 0, until = null) {
+  const out = [];
+  let cur = null;
+  for (const r of rows) {
+    if (until && r.s >= until) break;
+    if (r.bal < line) {
+      if (!cur) cur = { from: r.s, low: r.bal, lowOn: r.s };
+      else if (r.bal < cur.low) { cur.low = r.bal; cur.lowOn = r.s; }
+    } else if (cur) { out.push({ ...cur, to: r.s }); cur = null; }
+  }
+  return out;
+}
+
 // Next income date after today (null if none within a year).
 export function nextPayday(doc, today = todayIso()) {
   for (let i = 1; i <= 366; i++) {
@@ -223,12 +245,14 @@ export const isEssential = (b) => ESSENTIAL.test(`${b.category || ''} ${b.name}`
 // with income and bills as scheduled (so an income end date, like severance, shows up here).
 export function runway(doc, today = todayIso()) {
   const line = +doc.settings.cushion || 0;
-  const base = { today, days: 730 };
+  // Look 60 days past the two-year horizon so a dip that straddles its end isn't read as running out.
+  const base = { today, days: 790 };
+  const within = (o) => (o && daysBetween(today, o) <= 730 ? o : null);
   const rows = simulate(doc, base);
-  const out = firstBelow(rows, line);
+  const out = within(runsOut(rows, line));
   const days = out ? daysBetween(today, out) : null;
   const gain = (alt) => {
-    const o = firstBelow(simulate(doc, { ...base, ...alt }), line);
+    const o = within(runsOut(simulate(doc, { ...base, ...alt }), line));
     return o === null ? Infinity : daysBetween(today, o) - (days ?? 0);
   };
   const levers = out === null ? [] : [
@@ -236,7 +260,7 @@ export function runway(doc, today = todayIso()) {
     ...(budgetTotal(doc) > 0 ? [{ label: 'Trim everyday spending by 20%', sub: `${Math.round(budgetTotal(doc) * 0.2)} / month`, days: gain({ budgetScale: 0.8 }) }] : []),
   ].filter((l) => l.days > 0).sort((a, b) => b.days - a.days).slice(0, 3);
   const burn = doc.bills.reduce((a, b) => a + perMonth(b), 0) + budgetTotal(doc);
-  return { out, days, months: days === null ? null : days / 30.44, burn, levers, cash: available(doc) };
+  return { out, days, months: days === null ? null : days / 30.44, burn, levers, cash: available(doc), dips: dips(rows, line, out || iso(addDays(D(today), 731))) };
 }
 
 // Spending inferred between the last two check-ins: what left the account that isn't a known bill.
